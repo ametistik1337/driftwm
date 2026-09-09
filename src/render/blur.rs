@@ -180,6 +180,7 @@ fn padded_rect(win_rect: Rectangle<i32, Physical>, pad: i32) -> Rectangle<i32, P
 /// client's blur region, which lives in the mask and nowhere else.
 pub struct MaskStamp {
     geometry_generation: u64,
+    surface_commit: u64,
     live: Size<i32, Physical>,
     regions: Option<Vec<Rectangle<i32, Physical>>>,
 }
@@ -188,10 +189,12 @@ impl MaskStamp {
     fn matches(
         &self,
         geometry_generation: u64,
+        surface_commit: u64,
         live: Size<i32, Physical>,
         regions: Option<&[Rectangle<i32, Physical>]>,
     ) -> bool {
         self.geometry_generation == geometry_generation
+            && self.surface_commit == surface_commit
             && self.live == live
             && self.regions.as_deref() == regions
     }
@@ -235,6 +238,7 @@ pub struct BlurCache {
     pub zeroed: bool,
     pub dirty: bool,
     pub last_geometry_generation: u64,
+    pub last_surface_commit: u64,
     /// View the blur was last computed at.
     pub last_view: ViewStamp,
     pub last_backdrop_hash: u64,
@@ -289,6 +293,7 @@ impl BlurCache {
             zeroed: true,
             dirty: true,
             last_geometry_generation: 0,
+            last_surface_commit: 0,
             last_view: ViewStamp::never_captured(),
             last_backdrop_hash: 0,
             id: Id::new(),
@@ -1305,6 +1310,13 @@ pub(crate) fn process_blur_requests(
         // Reset by the per-window path below on the frames that take it.
         cache.age_pads(PAD_KEEP_FRAMES);
 
+        let surface_commit = state
+            .render
+            .surface_commit_generations
+            .get(&req.surface_id)
+            .copied()
+            .unwrap_or(0);
+        let surface_changed = cache.last_surface_commit != surface_commit;
         let backdrop_hash = fingerprints[i].hash;
         let backdrop_changed = cache.last_backdrop_hash != backdrop_hash;
         let geom_changed = cache.last_geometry_generation != geom_gen;
@@ -1321,7 +1333,7 @@ pub(crate) fn process_blur_requests(
         // their own backdrop to do it: their frost is over the same background,
         // and holding them back is what leaves it frozen while its neighbours
         // animate.
-        if backdrop_changed || geom_changed || view_dirty || backdrop_beat {
+        if backdrop_changed || geom_changed || view_dirty || backdrop_beat || surface_changed {
             cache.dirty = true;
         }
         // Two re-capture budgets in different currencies: composed frames for
@@ -1343,6 +1355,7 @@ pub(crate) fn process_blur_requests(
         }
         cache.last_backdrop_hash = backdrop_hash;
         cache.last_geometry_generation = geom_gen;
+        cache.last_surface_commit = surface_commit;
         cache.last_view = view;
 
         needs_recompute.push(cache.dirty);
@@ -1704,11 +1717,17 @@ pub(crate) fn process_blur_requests(
         // special-case.
         let key = (output_name.clone(), req.surface_id.clone());
         let regions = req.region_rects.as_deref().map(|v| v.as_slice());
+        let surface_commit = state
+            .render
+            .surface_commit_generations
+            .get(&req.surface_id)
+            .copied()
+            .unwrap_or(0);
         let mask_stale = mask_forced[i]
             || state.render.blur_cache.get(&key).is_none_or(|c| {
                 c.mask_stamp
                     .as_ref()
-                    .is_none_or(|s| !s.matches(geom_gen, win_size, regions))
+                    .is_none_or(|s| !s.matches(geom_gen, surface_commit, win_size, regions))
             });
 
         let (surf_start, surf_end) = surface_ranges[i];
@@ -1803,6 +1822,7 @@ pub(crate) fn process_blur_requests(
             cache.mask_commits = commits;
             cache.mask_stamp = Some(MaskStamp {
                 geometry_generation: geom_gen,
+                surface_commit,
                 live: win_size,
                 regions: regions.map(|r| r.to_vec()),
             });
@@ -2530,6 +2550,7 @@ mod tests {
     fn captured_mask() -> MaskStamp {
         MaskStamp {
             geometry_generation: 7,
+            surface_commit: 1,
             live: (400, 300).into(),
             regions: None,
         }
@@ -2537,12 +2558,17 @@ mod tests {
 
     #[test]
     fn an_unchanged_mask_is_reused() {
-        assert!(captured_mask().matches(7, (400, 300).into(), None));
+        assert!(captured_mask().matches(7, 1, (400, 300).into(), None));
     }
 
     #[test]
     fn a_geometry_change_restages_the_mask() {
-        assert!(!captured_mask().matches(8, (400, 300).into(), None));
+        assert!(!captured_mask().matches(8, 1, (400, 300).into(), None));
+    }
+
+    #[test]
+    fn a_surface_commit_change_restages_the_mask() {
+        assert!(!captured_mask().matches(7, 2, (400, 300).into(), None));
     }
 
     /// Zoom moves the live extent without touching the geometry generation, and
@@ -2551,7 +2577,7 @@ mod tests {
     /// texture updates — an alpha multiply misaligned by the zoom step.
     #[test]
     fn a_zoom_step_inside_one_allocation_restages_the_mask() {
-        assert!(!captured_mask().matches(7, (399, 300).into(), None));
+        assert!(!captured_mask().matches(7, 1, (399, 300).into(), None));
     }
 
     /// A client can change its blur region without moving or resizing. The
@@ -2564,11 +2590,11 @@ mod tests {
         };
         let live = (400, 300).into();
 
-        assert!(stamp.matches(7, live, Some(&[rect(0, 0, 100, 100)])));
-        assert!(!stamp.matches(7, live, Some(&[rect(0, 0, 100, 200)])));
-        assert!(!stamp.matches(7, live, Some(&[])));
-        assert!(!stamp.matches(7, live, None));
-        assert!(!captured_mask().matches(7, live, Some(&[rect(0, 0, 100, 100)])));
+        assert!(stamp.matches(7, 1, live, Some(&[rect(0, 0, 100, 100)])));
+        assert!(!stamp.matches(7, 1, live, Some(&[rect(0, 0, 100, 200)])));
+        assert!(!stamp.matches(7, 1, live, Some(&[])));
+        assert!(!stamp.matches(7, 1, live, None));
+        assert!(!captured_mask().matches(7, 1, live, Some(&[rect(0, 0, 100, 100)])));
     }
 
     /// The pad pair holds exactly what the blur runs over, while the textures

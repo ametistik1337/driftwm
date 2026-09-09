@@ -7,6 +7,7 @@ uniform float alpha;
 uniform float tint;
 #endif
 void main() {
-    float a = step(0.001, texture2D(tex, v_coords).a);
+    float tex_a = texture2D(tex, v_coords).a;
+    float a = smoothstep(0.08, 0.75, tex_a);
     gl_FragColor = vec4(a) * alpha;
 }

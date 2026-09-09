@@ -34,6 +34,8 @@ pub struct RenderCache {
     /// by output also lets each output's per-frame prune touch only its own entries.
     pub blur_cache: HashMap<(String, ObjectId), crate::render::BlurCache>,
     pub blur_geometry_generation: u64,
+    /// Generation counter incremented per surface commit to invalidate stale blur masks.
+    pub surface_commit_generations: HashMap<ObjectId, u64>,
     /// Wrap mode the blur's backdrop textures are allocated with. A property of
     /// the GL context, resolved on first use because the query behind it is a
     /// `glGetString` plus a string walk that would otherwise run per output per
@@ -98,6 +100,7 @@ impl RenderCache {
             blur_mask_shader: None,
             blur_cache: HashMap::new(),
             blur_geometry_generation: 0,
+            surface_commit_generations: HashMap::new(),
             blur_wrap_mode: None,
             blur_scratch: HashMap::new(),
             shared_blur: HashMap::new(),

@@ -78,6 +78,7 @@ impl CompositorHandler for DriftWm {
             );
         }
         self.cleanup_surface_state(surface);
+        self.render.surface_commit_generations.remove(&surface.id());
         // lock_surfaces is keyed by output — sweep values.
         self.lock_surfaces
             .retain(|_, ls| ls.wl_surface() != surface);
@@ -213,6 +214,11 @@ impl CompositorHandler for DriftWm {
         surface: &smithay::reexports::wayland_server::protocol::wl_surface::WlSurface,
     ) {
         self.commits_since_render = self.commits_since_render.wrapping_add(1);
+        self.render
+            .surface_commit_generations
+            .entry(surface.id())
+            .and_modify(|g| *g = g.wrapping_add(1))
+            .or_insert(1);
 
         // Per-surface damage; global dirty would force every CRTC to redraw
         // on every commit and defeat the per-output damage tracker.
