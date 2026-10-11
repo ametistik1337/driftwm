@@ -1553,7 +1553,30 @@ fn render_frame(
     // cache is keyed by element id + commit and ignores alpha, so a 1.0 → <1.0 change
     // reuses the previously-drawn opaque buffer. GPU compositing reapplies alpha.
     let mut frame_flags = FrameFlags::empty();
-    if !data.config.backend.disable_direct_scanout {
+    let has_active_capture = {
+        let capture_key = format!("sc:{}", output.name());
+        let cap_key = format!("cap:{}", output.name());
+        let now = data.start_time.elapsed();
+        let recent = std::time::Duration::from_millis(1000);
+        let sc_active = data
+            .render
+            .capture_state
+            .get(&capture_key)
+            .and_then(|cs| cs.last_submit)
+            .is_some_and(|last| now.saturating_sub(last) < recent);
+        let cap_active = data
+            .render
+            .capture_state
+            .get(&cap_key)
+            .and_then(|cs| cs.last_submit)
+            .is_some_and(|last| now.saturating_sub(last) < recent);
+        sc_active
+            || cap_active
+            || !data.pending_screencopies.is_empty()
+            || !data.pending_captures.is_empty()
+    };
+
+    if !data.config.backend.disable_direct_scanout && !has_active_capture {
         frame_flags |= FrameFlags::ALLOW_PRIMARY_PLANE_SCANOUT_ANY;
     }
     if cursor_alpha >= 1.0 && !data.config.backend.disable_hardware_cursor {

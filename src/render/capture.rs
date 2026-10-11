@@ -60,7 +60,7 @@ pub fn render_screencopy(
     elements: &[OutputRenderElements],
 ) {
     use driftwm::protocols::screencopy::ScreencopyBuffer;
-    use smithay::backend::renderer::{ExportMem, Renderer};
+    use smithay::backend::renderer::ExportMem;
     use smithay::wayland::shm;
     use std::ptr;
 
@@ -161,7 +161,7 @@ pub fn render_screencopy(
                     cs,
                 ) {
                     Ok(sync) => {
-                        if let Err(e) = renderer.wait(&sync) {
+                        if let Err(e) = wait_for_render(&sync) {
                             tracing::warn!("screencopy: dmabuf sync wait failed: {e:?}");
                             continue; // screencopy Drop sends failed()
                         }
@@ -263,6 +263,28 @@ pub fn render_screencopy(
 /// purpose — an element the window does not fully occlude leaves smithay's
 /// primary plane holding two elements instead of one, which costs every frame
 /// its direct scan-out for the sake of something no on-screen pixel needs.
+/// Block until the capture render has actually finished on the GPU, before the
+/// buffer is handed to the client.
+///
+/// `renderer.wait()` is not enough here: with an EGL fence it only queues a
+/// GPU-side `eglWaitSync` into our own context and returns immediately. Mesa
+/// hides that behind implicit dmabuf sync, but NVIDIA has none, so recorders
+/// (xdg-desktop-portal-wlr, OBS, Kooha) read half-drawn frames and every window
+/// and layer surface flickers in the recording.
+fn wait_for_render(
+    sync: &smithay::backend::renderer::sync::SyncPoint,
+) -> Result<(), smithay::backend::renderer::sync::Interrupted> {
+    // Interrupted means "try again", not a timeout; give up after a few spurious wakeups.
+    let mut last = Ok(());
+    for _ in 0..4 {
+        last = sync.wait();
+        if last.is_ok() {
+            break;
+        }
+    }
+    last
+}
+
 fn clear_color_for(format: Fourcc, opaque: bool) -> [f32; 4] {
     if opaque {
         return [0.0, 0.0, 0.0, 1.0];
@@ -395,18 +417,19 @@ fn render_to_dmabuf(
     use smithay::backend::renderer::damage::OutputDamageTracker;
 
     let clear = clear_color_for(dmabuf.format().code, opaque_clear);
+    // Клиентский DMA-BUF всегда рендерится с age = 0 (полный кадр).
+    // Клиенты (Sunshine, PipeWire portal, Moonlight) отдают циклический пул из разных буферов,
+    // поэтому инкрементальный возраст cs.age приводил к отрисовке частичной дельты
+    // в буфер с чужими/старыми данными, вызывая мерцание и скачки кадров в трансляции.
+    let mut target = renderer.bind(dmabuf)?;
     let sync = match capture_state {
         Some(cs) => {
-            let mut target = renderer.bind(dmabuf)?;
-            let result = cs
-                .damage_tracker
-                .render_output(renderer, &mut target, cs.age, elements, clear)?
-                .sync;
-            cs.age += 1;
-            result
+            cs.age = 0;
+            cs.damage_tracker
+                .render_output(renderer, &mut target, 0, elements, clear)?
+                .sync
         }
         None => {
-            let mut target = renderer.bind(dmabuf)?;
             let mut damage_tracker = OutputDamageTracker::new(size, scale, transform);
             damage_tracker
                 .render_output(renderer, &mut target, 0, elements, clear)?
@@ -424,7 +447,7 @@ pub fn render_capture_frames(
     output: &Output,
     elements: &[OutputRenderElements],
 ) {
-    use smithay::backend::renderer::{ExportMem, Renderer};
+    use smithay::backend::renderer::ExportMem;
     use smithay::wayland::shm;
     use std::ptr;
 
@@ -522,7 +545,7 @@ pub fn render_capture_frames(
                 cs,
             ) {
                 Ok(sync) => {
-                    if let Err(e) = renderer.wait(&sync) {
+                    if let Err(e) = wait_for_render(&sync) {
                         tracing::warn!("capture: dmabuf sync wait failed: {e:?}");
                         false
                     } else {
@@ -626,7 +649,7 @@ pub fn render_toplevel_captures(state: &mut crate::state::DriftWm, renderer: &mu
     use smithay::backend::renderer::element::Kind;
     use smithay::backend::renderer::element::surface::WaylandSurfaceRenderElement;
     use smithay::backend::renderer::element::surface::render_elements_from_surface_tree;
-    use smithay::backend::renderer::{ExportMem, Renderer};
+    use smithay::backend::renderer::ExportMem;
     use smithay::utils::Point;
     use smithay::wayland::shm;
     use std::ptr;
@@ -758,7 +781,7 @@ pub fn render_toplevel_captures(state: &mut crate::state::DriftWm, renderer: &mu
                 &elems_refs,
                 cs,
             ) {
-                Ok(sync) => match renderer.wait(&sync) {
+                Ok(sync) => match wait_for_render(&sync) {
                     Ok(()) => true,
                     Err(e) => {
                         tracing::warn!("toplevel capture: dmabuf sync wait failed: {e:?}");
