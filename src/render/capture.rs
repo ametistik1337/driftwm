@@ -611,9 +611,10 @@ pub fn render_capture_frames(
             let h = capture.buffer_size.h;
             capture.frame.transform(output_transform.into());
             capture.frame.damage(0, 0, w, h);
-            let tv_sec_hi = (timestamp.as_secs() >> 32) as u32;
-            let tv_sec_lo = (timestamp.as_secs() & 0xFFFFFFFF) as u32;
-            let tv_nsec = timestamp.subsec_nanos();
+            let shown = driftwm::protocols::screencopy::presentation_clock_now();
+            let tv_sec_hi = (shown.as_secs() >> 32) as u32;
+            let tv_sec_lo = (shown.as_secs() & 0xFFFFFFFF) as u32;
+            let tv_nsec = shown.subsec_nanos();
             capture
                 .frame
                 .presentation_time(tv_sec_hi, tv_sec_lo, tv_nsec);
@@ -833,9 +834,10 @@ pub fn render_toplevel_captures(state: &mut crate::state::DriftWm, renderer: &mu
             let h = capture.buffer_size.h;
             capture.frame.transform(Transform::Normal.into());
             capture.frame.damage(0, 0, w, h);
-            let tv_sec_hi = (timestamp.as_secs() >> 32) as u32;
-            let tv_sec_lo = (timestamp.as_secs() & 0xFFFFFFFF) as u32;
-            let tv_nsec = timestamp.subsec_nanos();
+            let shown = driftwm::protocols::screencopy::presentation_clock_now();
+            let tv_sec_hi = (shown.as_secs() >> 32) as u32;
+            let tv_sec_lo = (shown.as_secs() & 0xFFFFFFFF) as u32;
+            let tv_nsec = shown.subsec_nanos();
             capture
                 .frame
                 .presentation_time(tv_sec_hi, tv_sec_lo, tv_nsec);

@@ -501,7 +501,9 @@ impl Screencopy {
         self.with_damage
     }
 
-    pub fn submit(mut self, y_invert: bool, timestamp: Duration) {
+    /// `timestamp` — внутреннее время композитора (для интервалов); в протокол уходит
+    /// CLOCK_MONOTONIC, см. [`presentation_clock_now`].
+    pub fn submit(mut self, y_invert: bool, _timestamp: Duration) {
         self.frame.flags(if y_invert {
             Flags::YInvert
         } else {
@@ -513,6 +515,7 @@ impl Screencopy {
             self.frame.damage(0, 0, size.w as u32, size.h as u32);
         }
 
+        let timestamp = presentation_clock_now();
         let tv_sec_hi = (timestamp.as_secs() >> 32) as u32;
         let tv_sec_lo = (timestamp.as_secs() & 0xFFFFFFFF) as u32;
         let tv_nsec = timestamp.subsec_nanos();
@@ -520,4 +523,15 @@ impl Screencopy {
 
         self.submitted = true;
     }
+}
+
+/// Время кадра для протоколов захвата экрана: CLOCK_MONOTONIC, как требуют
+/// wlr-screencopy и ext-image-copy-capture. Не время с запуска композитора:
+/// рекордеры (wf-recorder со звуком) сверяют кадры с аудио по монотонным часам
+/// и иначе выбрасывают все кадры как «устаревшие» — видео выходит пустым.
+pub fn presentation_clock_now() -> Duration {
+    let mut ts = libc::timespec { tv_sec: 0, tv_nsec: 0 };
+    // SAFETY: clock_gettime пишет только в переданную структуру
+    unsafe { libc::clock_gettime(libc::CLOCK_MONOTONIC, &mut ts) };
+    Duration::new(ts.tv_sec as u64, ts.tv_nsec as u32)
 }
