@@ -45,32 +45,19 @@ pub fn maintain_satellite(state: &mut DriftWm) {
     }
 
     let is_dead = match &mut state.satellite {
-        Some(s) => match s.child.try_wait() {
-            Ok(Some(status)) => {
+        Some(s) => {
+            let pid = s.child.id() as libc::pid_t;
+            let res = unsafe { libc::kill(pid, 0) };
+            if res == -1 && std::io::Error::last_os_error().raw_os_error() == Some(libc::ESRCH) {
                 tracing::warn!(
-                    "xwayland-satellite on {} exited with status {status}, respawning...",
+                    "xwayland-satellite pid {pid} on {} is dead, respawning...",
                     s.display_name
                 );
                 true
+            } else {
+                false
             }
-            Ok(None) => false,
-            Err(e) => {
-                let pid = s.child.id() as libc::pid_t;
-                let alive = unsafe {
-                    libc::kill(pid, 0) == 0
-                        || std::io::Error::last_os_error().raw_os_error() == Some(libc::EPERM)
-                };
-                if !alive {
-                    tracing::warn!(
-                        "xwayland-satellite pid {pid} on {} is dead ({e}), respawning...",
-                        s.display_name
-                    );
-                    true
-                } else {
-                    false
-                }
-            }
-        },
+        }
         None => true,
     };
 
@@ -179,13 +166,23 @@ fn probe_satellite(path: &str) -> bool {
             return false;
         }
     };
-    match child.wait() {
+    let res = unsafe {
+        libc::signal(libc::SIGCHLD, libc::SIG_DFL);
+        let r = child.wait();
+        libc::signal(libc::SIGCHLD, libc::SIG_IGN);
+        r
+    };
+    match res {
         Ok(s) if s.success() => true,
         Ok(_) => {
             tracing::warn!(
                 "xwayland-satellite at {path:?} is too old (need >= 0.7) — X11 apps disabled"
             );
             false
+        }
+        Err(err) if err.raw_os_error() == Some(libc::ECHILD) => {
+            // Reaped by SIG_IGN, spawn succeeded
+            true
         }
         Err(err) => {
             tracing::warn!("error waiting for xwayland-satellite probe: {err}");
