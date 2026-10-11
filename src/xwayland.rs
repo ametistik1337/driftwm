@@ -26,9 +26,58 @@ const MAX_DISPLAY: u32 = 50;
 
 pub struct Satellite {
     /// Held for the satellite's lifetime; satellite exits when its Wayland
-    /// connection closes on drop. SIGCHLD is SIG_IGN so the kernel auto-reaps.
-    #[allow(dead_code)]
-    child: Child,
+    /// connection closes on drop.
+    pub child: Child,
+    pub display_name: String,
+}
+
+impl Drop for Satellite {
+    fn drop(&mut self) {
+        let _ = self.child.kill();
+        let _ = self.child.wait();
+    }
+}
+
+/// Check if the satellite child process has exited, and respawn it if needed.
+pub fn maintain_satellite(state: &mut DriftWm) {
+    if !state.config.xwayland_enabled {
+        return;
+    }
+
+    let is_dead = match &mut state.satellite {
+        Some(s) => match s.child.try_wait() {
+            Ok(Some(status)) => {
+                tracing::warn!(
+                    "xwayland-satellite on {} exited with status {status}, respawning...",
+                    s.display_name
+                );
+                true
+            }
+            Ok(None) => false,
+            Err(e) => {
+                let pid = s.child.id() as libc::pid_t;
+                let alive = unsafe {
+                    libc::kill(pid, 0) == 0
+                        || std::io::Error::last_os_error().raw_os_error() == Some(libc::EPERM)
+                };
+                if !alive {
+                    tracing::warn!(
+                        "xwayland-satellite pid {pid} on {} is dead ({e}), respawning...",
+                        s.display_name
+                    );
+                    true
+                } else {
+                    false
+                }
+            }
+        },
+        None => true,
+    };
+
+    if is_dead {
+        state.satellite = None;
+        setup(state);
+    }
 }
 
 /// Spawn `xwayland-satellite :N` eagerly, export `DISPLAY=:N`. Fails soft:
@@ -99,7 +148,10 @@ pub fn setup(state: &mut DriftWm) {
 
     export_display(&display_name);
 
-    state.satellite = Some(Satellite { child });
+    state.satellite = Some(Satellite {
+        child,
+        display_name,
+    });
 }
 
 /// Probe whether the binary at `path` is launchable and supports our
@@ -151,7 +203,60 @@ fn find_free_display() -> Option<u32> {
 }
 
 fn display_in_use(n: u32) -> bool {
-    path_present(&format!("/tmp/.X{n}-lock")) || path_present(&format!("/tmp/.X11-unix/X{n}"))
+    let lock_path = format!("/tmp/.X{n}-lock");
+    let sock_path = format!("/tmp/.X11-unix/X{n}");
+
+    // Check lock file
+    let lock_held = if path_present(&lock_path) {
+        if let Ok(content) = std::fs::read_to_string(&lock_path) {
+            if let Some(pid_str) = content.split_whitespace().next() {
+                if let Ok(pid) = pid_str.parse::<i32>() {
+                    let res = unsafe { libc::kill(pid, 0) };
+                    if res == -1 && std::io::Error::last_os_error().raw_os_error() == Some(libc::ESRCH) {
+                        tracing::info!("Removing stale X11 lock file: {lock_path} (pid {pid} is dead)");
+                        let _ = std::fs::remove_file(&lock_path);
+                        false
+                    } else {
+                        true
+                    }
+                } else {
+                    true
+                }
+            } else {
+                true
+            }
+        } else {
+            true
+        }
+    } else {
+        false
+    };
+
+    if lock_held {
+        return true;
+    }
+
+    // Check unix domain socket
+    if path_present(&sock_path) {
+        use std::os::unix::net::UnixStream;
+        match UnixStream::connect(&sock_path) {
+            Ok(_) => {
+                // Socket is actively served
+                true
+            }
+            Err(e) if e.kind() == std::io::ErrorKind::ConnectionRefused => {
+                tracing::info!("Removing stale X11 socket: {sock_path}");
+                let _ = std::fs::remove_file(&sock_path);
+                false
+            }
+            Err(_) => {
+                // Permission denied or other error -> assume in use
+                true
+            }
+        }
+    } else {
+        false
+    }
 }
 
 fn path_present(path: &str) -> bool {

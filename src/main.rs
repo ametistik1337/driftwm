@@ -385,26 +385,35 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         smithay::reexports::calloop::timer::Timer::from_duration(std::time::Duration::from_secs(1)),
         |_, _, data: &mut DriftWm| {
             crate::render::send_frame_callbacks_fallback(data);
+            crate::xwayland::maintain_satellite(data);
             smithay::reexports::calloop::timer::TimeoutAction::ToDuration(
                 std::time::Duration::from_secs(1),
             )
         },
     )?;
 
-    // After WAYLAND_DISPLAY is set so satellite can connect as a Wayland client.
-    xwayland::setup(&mut data);
+    // Defer xwayland setup so the event loop is running and dispatching
+    // Wayland requests when satellite / Xwayland connects.
+    event_loop.handle().insert_source(
+        smithay::reexports::calloop::timer::Timer::from_duration(
+            std::time::Duration::from_millis(50),
+        ),
+        move |_, _, data: &mut DriftWm| {
+            crate::xwayland::setup(data);
+            smithay::reexports::calloop::timer::TimeoutAction::Drop
+        },
+    )?;
 
     // Auto-reap children. Must run after backend init — libseat uses
     // waitpid() during session setup.
     unsafe { libc::signal(libc::SIGCHLD, libc::SIG_IGN) };
 
-    // Defer autostart so the event loop is running first — GTK apps (swaync)
-    // need Wayland event processing before they connect.
+    // Defer autostart so the event loop and Xwayland are running first.
     let autostart = data.autostart.clone();
     if !autostart.is_empty() {
         event_loop.handle().insert_source(
             smithay::reexports::calloop::timer::Timer::from_duration(
-                std::time::Duration::from_millis(100),
+                std::time::Duration::from_millis(200),
             ),
             move |_, _, data: &mut DriftWm| {
                 for cmd in &autostart {
