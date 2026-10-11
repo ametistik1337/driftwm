@@ -6,7 +6,6 @@ use crate::state::{
 use crate::surface_tree::focus_belongs_to_toplevel;
 use driftwm::window_ext::WindowExt;
 use smithay::{
-    delegate_xdg_shell,
     desktop::{
         PopupKeyboardGrab, PopupKind, PopupPointerGrab, PopupUngrabStrategy, Window,
         find_popup_root_surface, get_popup_toplevel_coords, layer_map_for_output,
@@ -415,9 +414,6 @@ impl XdgShellHandler for DriftWm {
             // The window left the stage; the durable record must follow, or a
             // stale flush could re-save a window the user closed minutes ago.
             self.session_store_mark_dirty();
-            // The window may have sat under the cursor; re-target pointer focus
-            // now that it's gone so clicks don't fall into the destroyed surface.
-            self.refresh_pointer_focus();
         }
         // Must run after the focus-follow block above: that derives the dying
         // window's snap rect from stable_snap_rects (and, on a cache miss, live
@@ -487,7 +483,7 @@ impl XdgShellHandler for DriftWm {
                     return;
                 };
                 // Revoke the client's in-flight touch sequence (see the canvas branch below).
-                touch.cancel(self);
+                self.cancel_unframed_touch();
                 self.arm_interactive_move(&window);
                 touch.set_grab(self, grab, serial);
                 return;
@@ -502,9 +498,10 @@ impl XdgShellHandler for DriftWm {
             };
             // The finger's `down` was forwarded to the client (Forward mode), and
             // smithay routes touch motion/up to the slot's stored focus regardless
-            // of the grab — so cancel the client's sequence before the compositor
-            // takes over the drag, or it keeps receiving the whole sequence.
-            touch.cancel(self);
+            // of the grab — so revoke what the client holds before the compositor
+            // takes over the drag. What a frame already settled stays with the
+            // client (`dev/docs/todo.md`).
+            self.cancel_unframed_touch();
             // Moving re-anchors the window, invalidating any fill restore point.
             self.stage.clear_fill(&window);
             self.arm_interactive_move(&window);
@@ -607,8 +604,6 @@ impl XdgShellHandler for DriftWm {
         pointer.set_grab(self, grab, serial, Focus::Clear);
     }
 }
-
-delegate_xdg_shell!(DriftWm);
 
 /// Validate that the pointer has an active grab starting on the given surface.
 /// Returns the `GrabStartData` if the button click that started the grab

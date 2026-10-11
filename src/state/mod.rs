@@ -93,6 +93,7 @@ use std::collections::{BTreeMap, HashMap, HashSet};
 use std::sync::{Mutex, MutexGuard, TryLockError};
 use std::time::Instant;
 
+use driftwm::protocols::virtual_keyboard::VirtualKeyboardManagerState;
 use smithay::backend::renderer::damage::OutputDamageTracker;
 use smithay::backend::renderer::gles::GlesTexture;
 use smithay::reexports::wayland_protocols::ext::session_lock::v1::server::ext_session_lock_v1::ExtSessionLockV1;
@@ -114,7 +115,6 @@ use smithay::wayland::session_lock::{LockSurface, SessionLockManagerState, Sessi
 use smithay::wayland::shell::wlr_layer::WlrLayerShellState;
 use smithay::wayland::shell::xdg::decoration::XdgDecorationState;
 use smithay::wayland::viewporter::ViewporterState;
-use smithay::wayland::virtual_keyboard::VirtualKeyboardManagerState;
 use smithay::wayland::xdg_activation::XdgActivationState;
 use smithay::wayland::xdg_foreign::XdgForeignState;
 
@@ -276,6 +276,20 @@ impl SessionLock {
                     keep_lock_frames: true,
                     ..
                 }
+        )
+    }
+
+    /// Whether `locked` is still being withheld for outputs that owe a lock
+    /// frame. Input must not re-light a panel meanwhile: the backstop blanks
+    /// an output that never presents, and a wake would undo that blank before
+    /// it lands, re-arming the backstop with every keystroke.
+    pub fn confirmation_pending(&self) -> bool {
+        matches!(
+            self,
+            SessionLock::Locked {
+                pending_confirmation: Some(_),
+                ..
+            }
         )
     }
 
@@ -972,17 +986,19 @@ pub struct DriftWm {
     /// last_frame_instant to avoid double-ticking when multiple outputs
     /// render in one iteration.
     pub last_animation_tick: Instant,
-    /// A deferred pointer resync is pending. Flushed once per rendered frame so
-    /// a 90-140 Hz pan/momentum stream doesn't re-render a hover-reactive client
-    /// per event. See [`DriftWm::warp_pointer`].
-    pub pending_pointer_resync: bool,
     /// The last [`PointerDelivery`] actually put on the wire. `None` while the
-    /// record can't be trusted — nothing under the cursor, or a grab that
-    /// substituted its own focus and location. Written only by
+    /// record can't be trusted — nothing under the cursor, or a grab that does
+    /// its own work in `motion` (every driftwm grab); smithay's click and popup
+    /// grabs are recorded as what they forward. Written only by
     /// [`DriftWm::dispatch_pointer_motion`], read by
     /// [`DriftWm::refresh_pointer_focus`] to drop a re-seat the client would see
     /// as a phantom mouse move.
     pub last_pointer_delivery: Option<PointerDelivery>,
+    /// The raw `under` last handed to `pointer.motion`, grabbed or not — a
+    /// shadow of smithay's `pending_focus`, which `unset_grab` restores focus
+    /// from. `relative_motion` sets that too, but with the same focus, so the
+    /// shadow stays exact.
+    pub last_pointer_under: Option<(FocusTarget, Point<f64, Logical>)>,
     /// wl_surface commits since the last rendered frame. Tracy diagnostic
     /// counter (plotted as `frame.commits`); sampled and reset on every
     /// render_frame, so it's only meaningful on a single-output profiling
@@ -1251,10 +1267,12 @@ impl DriftWm {
 }
 
 impl DriftWm {
-    /// Cull dead windows and refresh output membership even on idle
-    /// (no-render) turns, or a client that died without a clean unmap lingers
-    /// in the read model until the next damage-driven render. Shared by the
-    /// main loop and the test server pump so the two can't drift apart.
+    /// The per-iteration duties shared by the main loop and the test server
+    /// pump, so the two can't drift apart; runs even on idle (no-render) turns.
+    /// The adoption sweep sits behind `retain_alive` on purpose — it adopts by
+    /// stage lookup, and a window whose client died in this iteration's
+    /// dispatch must be gone first — and ahead of the pull, so a reveal is
+    /// re-seated in the iteration that made it.
     pub fn refresh_and_flush_clients(&mut self) {
         self.stage.retain_alive();
         // Prune animation entries whose window left the stage — covers crash
@@ -1272,6 +1290,8 @@ impl DriftWm {
             .retain(|id, _| stage.window_by_id(*id).is_some());
         self.refresh_window_outputs();
         self.popups.cleanup();
+        self.sweep_deferred_adoptions();
+        self.refresh_pointer_focus();
         self.display_handle.flush_clients().ok();
     }
 
@@ -1324,6 +1344,10 @@ impl DriftWm {
             (
                 "virtual_kb_bindings",
                 self.virtual_kb_bindings.keyboard_count(),
+            ),
+            (
+                "virtual_keymaps_held",
+                self.virtual_kb_bindings.held_keymap_count(),
             ),
             ("state_file_cameras", self.state_file_cameras.len()),
             ("disconnected_outputs", self.disconnected_outputs.len()),

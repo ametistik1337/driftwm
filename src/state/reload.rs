@@ -63,6 +63,7 @@ impl DriftWm {
                 new_config.keyboard_layout = self.config.keyboard_layout.clone();
             } else {
                 tracing::info!("Config reload: keyboard layout updated");
+                driftwm::protocols::virtual_keyboard::seat_keymap_changed(self, &keyboard);
                 let mut mods = keyboard.modifier_state();
                 if mods.num_lock != num_lock {
                     mods.num_lock = num_lock;
@@ -248,13 +249,6 @@ impl DriftWm {
 
         self.apply_output_rules_after_reload();
         self.recompute_decoration_scale();
-
-        // A `zoom.interact_min` edit can flip pick mode without any pointer
-        // motion, so the stale pointer focus wouldn't self-heal until the next
-        // move. Resync once here (polish, not correctness: the pick decision
-        // uses element_under, not pointer focus, so a click right after the edit
-        // already behaves correctly). Runs after the config swap above.
-        self.refresh_pointer_focus();
 
         if let Some(msg) = super::errors::summarize_config_errors(&config_errors) {
             self.set_error(ErrorSource::Config, msg);

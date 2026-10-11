@@ -201,15 +201,11 @@ fn client_ssd_bar_right_pad_strip_is_chrome() {
         ),
         "the right-pad strip of a live window's own bar is chrome, not a hole"
     );
-    // Unlike a stand-in's strip, this one is a real surface's chrome, so the
-    // cascade answers with that surface — what it must never answer with is the
-    // client beneath.
-    assert_eq!(
-        f.state()
-            .pointer_focus_under(strip, strip)
-            .map(|(t, _)| t.0),
-        Some(server_surface(&window)),
-        "the strip belongs to the bar's own window, not the client beneath"
+    // The strip is chrome: it must not leak pointer focus to the client beneath,
+    // nor deliver out-of-bounds pointer events to the window itself.
+    assert!(
+        f.state().pointer_focus_under(strip, strip).is_none(),
+        "the strip gives no pointer focus to the client beneath or the window"
     );
 }
 
@@ -333,9 +329,9 @@ fn suspended_body_occludes_gesture_hit_tests_and_focus_center() {
     // FocusCenter over the stand-in centers the stand-in: the focus intent lands
     // on it and the client beneath takes no seat focus.
     f.state().warp_pointer(over);
-    // A deferred pointer resync (camera warp/animation) ending over the stand-in
+    // The pull after a camera warp or animation ending over the stand-in
     // resolves to no pointer focus — the hidden client gets no stray enter.
-    f.state().flush_pointer_resync();
+    f.state().refresh_pointer_focus();
     assert!(
         f.state()
             .seat
@@ -343,7 +339,7 @@ fn suspended_body_occludes_gesture_hit_tests_and_focus_center() {
             .unwrap()
             .current_focus()
             .is_none(),
-        "a deferred resync over the stand-in sends no enter to the client beneath"
+        "a pull over the stand-in sends no enter to the client beneath"
     );
     f.state()
         .execute_action(&driftwm::config::Action::FocusCenter);

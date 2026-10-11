@@ -9,18 +9,12 @@ use driftwm::window_ext::WindowExt;
 use smithay::wayland::seat::WaylandFocus;
 use smithay::{
     backend::renderer::ImportDma,
-    delegate_cursor_shape, delegate_data_control, delegate_data_device, delegate_dmabuf,
-    delegate_ext_data_control, delegate_fractional_scale, delegate_idle_inhibit,
-    delegate_input_method_manager, delegate_keyboard_shortcuts_inhibit, delegate_output,
-    delegate_pointer_constraints, delegate_pointer_gestures, delegate_presentation,
-    delegate_primary_selection, delegate_relative_pointer, delegate_seat,
-    delegate_security_context, delegate_single_pixel_buffer, delegate_tablet_manager,
-    delegate_text_input_manager, delegate_viewporter, delegate_xdg_activation,
     input::{
         Seat, SeatHandler, SeatState,
         dnd::{self, DnDGrab},
         keyboard,
         pointer::{CursorIcon, CursorImageStatus, Focus, PointerHandle},
+        tablet::TabletSeatHandler,
     },
     reexports::input::DeviceCapability as LibinputCapability,
     reexports::wayland_server::{
@@ -54,12 +48,13 @@ use smithay::{
             },
             wlr_data_control::{DataControlHandler, DataControlState},
         },
-        tablet_manager::TabletSeatHandler,
         xdg_activation::{
             XdgActivationHandler, XdgActivationState, XdgActivationToken, XdgActivationTokenData,
         },
     },
 };
+
+smithay::delegate_dispatch2!(DriftWm);
 
 impl SeatHandler for DriftWm {
     type KeyboardFocus = FocusTarget;
@@ -137,9 +132,6 @@ impl SeatHandler for DriftWm {
     }
 }
 
-delegate_seat!(DriftWm);
-delegate_text_input_manager!(DriftWm);
-
 impl SelectionHandler for DriftWm {
     type SelectionUserData = ();
 }
@@ -199,13 +191,11 @@ impl dnd::DndGrabHandler for DriftWm {
     }
 }
 
-delegate_data_device!(DriftWm);
-
 impl OutputHandler for DriftWm {}
 
-delegate_output!(DriftWm);
-
 impl TabletSeatHandler for DriftWm {
+    type ToolFocus = FocusTarget;
+
     fn tablet_tool_image(
         &mut self,
         _tool: &smithay::backend::input::TabletToolDescriptor,
@@ -214,10 +204,6 @@ impl TabletSeatHandler for DriftWm {
         self.cursor.cursor_status = image;
     }
 }
-
-delegate_tablet_manager!(DriftWm);
-
-delegate_cursor_shape!(DriftWm);
 
 impl DmabufHandler for DriftWm {
     fn dmabuf_state(&mut self) -> &mut DmabufState {
@@ -242,10 +228,6 @@ impl DmabufHandler for DriftWm {
     }
 }
 
-delegate_dmabuf!(DriftWm);
-
-delegate_viewporter!(DriftWm);
-
 impl FractionalScaleHandler for DriftWm {
     fn new_fractional_scale(&mut self, surface: WlSurface) {
         let scale = self
@@ -259,8 +241,6 @@ impl FractionalScaleHandler for DriftWm {
         });
     }
 }
-
-delegate_fractional_scale!(DriftWm);
 
 impl XdgActivationHandler for DriftWm {
     fn activation_state(&mut self) -> &mut XdgActivationState {
@@ -358,15 +338,11 @@ impl XdgActivationHandler for DriftWm {
     }
 }
 
-delegate_xdg_activation!(DriftWm);
-
 impl PrimarySelectionHandler for DriftWm {
     fn primary_selection_state(&mut self) -> &mut PrimarySelectionState {
         &mut self.primary_selection_state
     }
 }
-
-delegate_primary_selection!(DriftWm);
 
 impl DataControlHandler for DriftWm {
     fn data_control_state(&mut self) -> &mut DataControlState {
@@ -374,15 +350,11 @@ impl DataControlHandler for DriftWm {
     }
 }
 
-delegate_data_control!(DriftWm);
-
 impl ExtDataControlHandler for DriftWm {
     fn data_control_state(&mut self) -> &mut ExtDataControlState {
         &mut self.ext_data_control_state
     }
 }
-
-delegate_ext_data_control!(DriftWm);
 
 impl PointerConstraintsHandler for DriftWm {
     fn new_constraint(&mut self, surface: &WlSurface, pointer: &PointerHandle<Self>) {
@@ -394,7 +366,7 @@ impl PointerConstraintsHandler for DriftWm {
         //
         // Stale covers the cursor having left the surface, not just focus
         // pointing elsewhere: a pan warps the cursor off the window and drops
-        // the constraint a frame before focus follows, and a constraint created
+        // the constraint before the pull re-seats focus, and a constraint created
         // inside that gap would otherwise arm on a window the cursor is no
         // longer over — freezing it there with no path back.
         let already_focused = pointer.current_focus().map(|f| f.0).as_ref() == Some(surface);
@@ -427,11 +399,6 @@ impl PointerConstraintsHandler for DriftWm {
     }
 }
 
-delegate_pointer_constraints!(DriftWm);
-
-delegate_relative_pointer!(DriftWm);
-delegate_pointer_gestures!(DriftWm);
-
 impl KeyboardShortcutsInhibitHandler for DriftWm {
     fn keyboard_shortcuts_inhibit_state(
         &mut self,
@@ -458,8 +425,6 @@ impl KeyboardShortcutsInhibitHandler for DriftWm {
     fn inhibitor_destroyed(&mut self, _inhibitor: KeyboardShortcutsInhibitor) {}
 }
 
-delegate_keyboard_shortcuts_inhibit!(DriftWm);
-
 impl SecurityContextHandler for DriftWm {
     fn context_created(&mut self, source: SecurityContextListenerSource, context: SecurityContext) {
         let result = self
@@ -479,7 +444,6 @@ impl SecurityContextHandler for DriftWm {
         }
     }
 }
-delegate_security_context!(DriftWm);
 
 // Replaces smithay's virtual-keyboard delegate so OSK key presses run through
 // compositor bindings first (see `protocols::virtual_keyboard`).
@@ -520,7 +484,6 @@ impl driftwm::protocols::virtual_keyboard::VirtualKeyboardBindingHandler for Dri
         true
     }
 }
-driftwm::delegate_virtual_keyboard_bindings!(DriftWm);
 
 impl InputMethodHandler for DriftWm {
     fn new_popup(&mut self, surface: PopupSurface) {
@@ -553,8 +516,6 @@ impl InputMethodHandler for DriftWm {
     }
 }
 
-delegate_input_method_manager!(DriftWm);
-
 impl IdleInhibitHandler for DriftWm {
     fn inhibit(&mut self, surface: WlSurface) {
         self.idle_inhibiting_surfaces.insert(surface);
@@ -564,9 +525,6 @@ impl IdleInhibitHandler for DriftWm {
     }
 }
 
-delegate_idle_inhibit!(DriftWm);
-
-use smithay::delegate_idle_notify;
 use smithay::wayland::idle_notify::{IdleNotifierHandler, IdleNotifierState};
 
 impl IdleNotifierHandler for DriftWm {
@@ -574,12 +532,7 @@ impl IdleNotifierHandler for DriftWm {
         &mut self.idle_notifier_state
     }
 }
-delegate_idle_notify!(DriftWm);
 
-delegate_presentation!(DriftWm);
-delegate_single_pixel_buffer!(DriftWm);
-
-use smithay::delegate_xdg_foreign;
 use smithay::wayland::xdg_foreign::{XdgForeignHandler, XdgForeignState};
 
 impl XdgForeignHandler for DriftWm {
@@ -587,12 +540,7 @@ impl XdgForeignHandler for DriftWm {
         &mut self.xdg_foreign_state
     }
 }
-delegate_xdg_foreign!(DriftWm);
 
-use smithay::delegate_content_type;
-delegate_content_type!(DriftWm);
-
-use smithay::delegate_xdg_dialog;
 use smithay::wayland::shell::xdg::dialog::XdgDialogHandler;
 
 impl XdgDialogHandler for DriftWm {
@@ -612,9 +560,7 @@ impl XdgDialogHandler for DriftWm {
         }
     }
 }
-delegate_xdg_dialog!(DriftWm);
 
-use smithay::delegate_xdg_decoration;
 use smithay::wayland::shell::xdg::ToplevelSurface;
 use smithay::wayland::shell::xdg::decoration::XdgDecorationHandler;
 
@@ -715,8 +661,6 @@ impl XdgDecorationHandler for DriftWm {
         }
     }
 }
-
-delegate_xdg_decoration!(DriftWm);
 
 use driftwm::protocols::foreign_toplevel::{ForeignToplevelHandler, ForeignToplevelManagerState};
 
@@ -841,8 +785,6 @@ impl smithay::wayland::foreign_toplevel_list::ForeignToplevelListHandler for Dri
         &mut self.foreign_toplevel_list_state
     }
 }
-
-smithay::delegate_foreign_toplevel_list!(DriftWm);
 
 use driftwm::protocols::screencopy::{Screencopy, ScreencopyHandler, ScreencopyManagerState};
 
@@ -973,10 +915,6 @@ impl ToplevelCaptureSourceHandler for DriftWm {
         source.user_data().insert_if_missing(|| kind);
     }
 }
-
-smithay::delegate_image_capture_source!(DriftWm);
-smithay::delegate_output_capture_source!(DriftWm);
-smithay::delegate_toplevel_capture_source!(DriftWm);
 
 use driftwm::protocols::image_copy_capture::{
     ImageCopyCaptureHandler, ImageCopyCaptureState, PendingCapture,
@@ -1140,7 +1078,6 @@ impl OutputManagementHandler for DriftWm {
 driftwm::delegate_output_management!(DriftWm);
 
 use crate::state::SessionLock;
-use smithay::delegate_session_lock;
 use smithay::wayland::session_lock::{
     LockSurface, LockSurfaceData, SessionLockHandler, SessionLockManagerState, SessionLocker,
 };
@@ -1152,8 +1089,8 @@ use std::sync::atomic::{AtomicBool, Ordering};
 /// state shape alone — `ext_session_lock_surface_v1` has no destroy seam a
 /// handler could hook.
 pub(crate) struct LockRoleMarker {
-    /// driftwm answered this role's creation with a configure. Rules out the
-    /// two roles `new_surface` returns early on: those stay live and unconfigured
+    /// driftwm answered this role's creation with a configure. Rules out a role
+    /// `new_surface` returned early on: that one stays live and unconfigured
     /// forever, and must keep getting smithay's real error on a live proxy.
     pub configured: AtomicBool,
     /// The hook has already found this role orphaned. A latch, because the
@@ -1177,13 +1114,9 @@ impl SessionLockHandler for DriftWm {
             // *newcomer's* lock. Dropping the locker sends `finished`, the
             // protocol's answer to a lock already held.
             //
-            // What it does not buy: the refused client keeps its
-            // `ext_session_lock_v1`, and smithay answers `unlock_and_destroy` on
-            // it by posting a protocol error and then unlocking anyway — with no
-            // identity handed to `unlock` to check. So any client that ever
-            // obtained a lock object can still unlock the session. Open in niri
-            // and cosmic-comp too; closing it needs a protocol seam smithay
-            // doesn't expose.
+            // The refused client keeps its `ext_session_lock_v1`, but smithay
+            // answers `unlock_and_destroy` from any lock other than the one
+            // that locked with `invalid_unlock`, so it cannot unlock either.
             Some(lock) if lock.is_alive() => {
                 tracing::info!("Refusing session lock: the session is already locked");
                 return;
@@ -1285,9 +1218,6 @@ impl SessionLockHandler for DriftWm {
         // Kill all transient input/animation state so nothing fires during lock
         self.gesture_state = None;
         self.held_action = None;
-        // Must precede `pointer.unset_grab` below: `MoveGrab::unset` re-arms
-        // `pending_pointer_resync` when it finds `grab_cursor` still set, and
-        // that resync would re-target pointer focus on the next frame.
         self.cursor.grab_cursor = false;
         // Pick mode makes decoration_cursor true over whole window bodies, so
         // locking while hovering a pick target would leave it set through the
@@ -1386,21 +1316,17 @@ impl SessionLockHandler for DriftWm {
     }
 
     fn unlock(&mut self) {
-        // Idempotence, not identity: any client still holding an
-        // `ext_session_lock_v1` can send `unlock_and_destroy` at any time — one
-        // that never locked anything lands here with the session already
-        // unlocked, and the conversion below must not run twice on an
-        // already-canvas location. One that sends it while the session really is
-        // locked does unlock it; see the residual noted in `lock`.
+        // smithay routes `unlock_and_destroy` here only from the lock holding
+        // the session — anyone else's gets `invalid_unlock`, nothing more — so
+        // this cannot run on an unlocked session; the guard only backstops the
+        // conversion below against running twice on an already-canvas location.
         if !self.session_lock.is_locked() {
             return;
         }
         tracing::info!("Session unlocked");
-        // `unlock_and_destroy` can land on a still-`Pending` lock — smithay
-        // answers it with a protocol error and honours it anyway — so this
-        // timer needs cancelling too, not just the `Locked` backstop. The
-        // timer's own state check stops it acting on a dead lock; it doesn't
-        // stop the wakeup.
+        // A no-op from `Locked`, which is the only state smithay reaches this
+        // from (`enter_locked` leaves `Pending` before it grants the lock);
+        // kept so a direct call from `Pending` never leaves the deadline armed.
         self.cancel_pending_deadline();
         self.cancel_lock_confirm_timer();
         // Undo the canvas→screen conversion `lock` established, before anything
@@ -1420,10 +1346,11 @@ impl SessionLockHandler for DriftWm {
         self.touch_state.lock_slots.clear();
         // Restore focus to the window (or layer) that owned it before locking.
         self.update_keyboard_focus(smithay::utils::SERIAL_COUNTER.next_serial());
-        // `lock` cleared pointer focus and nothing re-seats it until the pointer
-        // physically moves, so the first click after unlocking would be
-        // swallowed. Must follow the assignment above — it no-ops while locked.
-        self.refresh_pointer_focus();
+        // An unlock that came through no input path — a fingerprint reader, a
+        // remote `loginctl unlock-session` — would otherwise leave a blanked
+        // panel dark and the idle timer running into the desktop it revealed.
+        self.idle_notifier_state.notify_activity(&self.seat);
+        self.wake_dpms_off_outputs();
         self.mark_all_dirty();
     }
 
@@ -1433,9 +1360,7 @@ impl SessionLockHandler for DriftWm {
         // `last_acked` the hook wrote, into the role being taken now — the
         // synthetic would tell the new role's first commit it had already acked,
         // masking a genuine violation. `None` is what a role starts on either
-        // way — first-ever or after smithay's `destroyed` reset. Above the early
-        // returns because a role driftwm declines is exactly a role that must
-        // keep getting smithay's real errors.
+        // way — first-ever or after smithay's `destroyed` reset.
         smithay::wayland::compositor::with_states(surface.wl_surface(), |states| {
             states
                 .data_map
@@ -1451,22 +1376,25 @@ impl SessionLockHandler for DriftWm {
             }
         });
 
-        // Only the client that holds the lock may put a surface on it. smithay's
-        // own guard is `locked_outputs`, which compares `wl_output` *resources*
-        // — per-client objects — so it never fires across clients: without this,
-        // a client whose `lock` was refused (it still holds a live
-        // `ext_session_lock_v1`) could overwrite the real lock screen's surface
-        // for an output with a password prompt of its own, and every locked
-        // pointer and touch event would route to it.
-        let owner = self.session_lock.incumbent().and_then(|lock| lock.client());
-        if owner.is_none() || owner != surface.wl_surface().client() {
+        // smithay already stops calling `new_surface` for a lock it has
+        // finished; matching the lock instance rather than its client also
+        // covers one client holding two lock objects, and keeps the invariant
+        // next to the one insertion into `lock_surfaces`.
+        if self.session_lock.incumbent() != Some(surface.ext_session_lock()) {
             tracing::warn!("Ignoring lock surface from a client that does not hold the lock");
             return;
         }
 
-        let output =
-            smithay::output::Output::from_resource(&wl_output).or_else(|| self.active_output());
-        let Some(output) = output else { return };
+        // A removed output's `wl_output` still resolves for as long as its
+        // global lingers (udev keeps it ten seconds past the disable), so
+        // membership in the space is the test, not resolution. Keyed on a dead
+        // output, the surface would sit in `lock_surfaces`, painted by nothing,
+        // until the unlock cleared it.
+        let Some(output) = smithay::output::Output::from_resource(&wl_output)
+            .filter(|output| self.space.outputs().any(|o| o == output))
+        else {
+            return;
+        };
 
         let output_size = crate::state::output_logical_size(&output);
 
@@ -1507,5 +1435,3 @@ impl GammaControlHandler for DriftWm {
 }
 
 driftwm::delegate_gamma_control!(DriftWm);
-
-delegate_session_lock!(DriftWm);

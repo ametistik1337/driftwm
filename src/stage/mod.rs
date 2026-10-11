@@ -44,6 +44,12 @@ pub struct FullscreenEntry<W> {
     /// could read a size the position had not been moved for yet, and the
     /// parked-camera predicate subtracts it back out to recover the park.
     pub centre_offset: Point<i32, Logical>,
+    /// The committed size the window entered fullscreen with, while it differs
+    /// from what the entry offered and the client has not answered yet: for
+    /// those frames the rect the pointer path hit-tests is the old size at the
+    /// new position, and the pull holds off it. `None` once the centring pass
+    /// has taken the answer, at whatever size the client commits.
+    pub awaiting_size: Option<Size<i32, Logical>>,
 }
 
 /// Screen-space pin site for a window pinned to one output (the
@@ -443,6 +449,7 @@ impl<W: StageElement> Stage<W> {
                 saved_location,
                 saved_size,
                 centre_offset: Point::default(),
+                awaiting_size: None,
             },
         );
     }
@@ -453,6 +460,12 @@ impl<W: StageElement> Stage<W> {
     pub fn set_fullscreen_centre_offset(&mut self, output: &str, offset: Point<i32, Logical>) {
         if let Some(entry) = self.fullscreen.get_mut(output) {
             entry.centre_offset = offset;
+        }
+    }
+
+    pub fn set_fullscreen_awaiting_size(&mut self, output: &str, size: Option<Size<i32, Logical>>) {
+        if let Some(entry) = self.fullscreen.get_mut(output) {
+            entry.awaiting_size = size;
         }
     }
 

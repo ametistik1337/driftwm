@@ -46,16 +46,16 @@ impl DriftWm {
         let over_pinned = self.stage.has_pinned() && {
             let screen_pos = canvas_to_screen(CanvasPos(pos), self.camera(), self.zoom()).0;
             self.pinned_window_under(screen_pos, pos).is_some()
+                || !matches!(self.pinned_decoration_under(screen_pos), PinnedChrome::Miss)
+                || (!self.config.resize_on_border && self.pinned_resize_margin_under(screen_pos))
         };
         // SSD chrome and the CSD resize margin sit outside the surface bbox, so
         // `element_under` misses them; count them as OnWindow so on-window bindings
         // apply over the chrome, not just the client surface.
         //
-        // `decoration_under` reaches a canvas element's resize margin only while
-        // `resize_on_border` is on, so with the option off that band needs its own
-        // ungated arm — otherwise the same ring binds on-window around a pinned
-        // window (whose margin arrives above, ungated) and on-canvas around a
-        // canvas one.
+        // `decoration_under` and `pinned_decoration_under` reach resize margins only
+        // while `resize_on_border` is on, so with the option off both canvas and
+        // pinned windows need ungated arms here to keep inert margins binding OnWindow.
         let over_window = over_pinned
             || self.element_under(pos).is_some()
             || self.canvas_layer_under(pos).is_some()
@@ -209,6 +209,10 @@ impl DriftWm {
         if self.space.outputs().next().is_none() {
             return;
         }
+        // A scene change and this press can share one dispatch — a bar unmaps,
+        // the finger lands — and the routing below reads `pointer_over_layer`
+        // and focus, which are only as fresh as the last pull.
+        self.refresh_pointer_focus();
         let serial = SERIAL_COUNTER.next_serial();
         let pointer = self.seat.get_pointer().unwrap();
 
@@ -1407,6 +1411,9 @@ impl DriftWm {
         if self.space.outputs().next().is_none() {
             return;
         }
+        // A scene change and this scroll can share one dispatch, and the
+        // routing below is only as fresh as the last pull.
+        self.refresh_pointer_focus();
         // When pointer is over a layer surface, forward scroll directly (no pan/zoom)
         if self.pointer_over_layer {
             let pointer = self.seat.get_pointer().unwrap();

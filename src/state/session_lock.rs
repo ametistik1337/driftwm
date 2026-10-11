@@ -54,12 +54,12 @@ impl DriftWm {
     /// locker is consumed — so inside that gap a plain `destroy` is accepted
     /// without `invalid_destroy` (leaving a locked session with a dead lock
     /// object, which the dead-client replacement path recovers), and an
-    /// `unlock_and_destroy` posts `invalid_unlock` and then unlocks regardless
-    /// (smithay's request handler has no early return after the error), so the
-    /// client is killed by a fatal protocol error *and* the session comes
-    /// unlocked where it previously just worked. That `unlock()` can also drop a
-    /// `pending_confirmation` still holding the locker, whose `Drop` sends
-    /// `finished`.
+    /// `unlock_and_destroy` posts `invalid_unlock` and stops there without
+    /// unlocking, which the same path recovers. The protocol forbids that
+    /// request before `locked`, so a conformant locker never sends it — but
+    /// the keyboard is handed to the lock surface below while the confirmation
+    /// is still pending, so a password typed during a stalled confirmation can
+    /// drive one into it (see the session-lock item in `dev/docs/todo.md`).
     pub fn enter_locked(&mut self, locker: SessionLocker) {
         let lock = locker.ext_session_lock().clone();
         #[allow(clippy::mutable_key_type)]
@@ -167,7 +167,7 @@ impl DriftWm {
         let pointer = self.seat.get_pointer().unwrap();
         let location = pointer.current_location();
         let serial = smithay::utils::SERIAL_COUNTER.next_serial();
-        let time = self.start_time.elapsed().as_millis() as u32;
+        let time = crate::input::monotonic_msec();
         self.dispatch_pointer_motion(None, location, serial, time);
         pointer.frame(self);
         self.set_keyboard_focus(None, smithay::utils::SERIAL_COUNTER.next_serial());
@@ -320,10 +320,10 @@ impl DriftWm {
 
     fn arm_lock_confirm_timer(&mut self, lock: ExtSessionLockV1) {
         // Repeating, not one-shot: blanking an output only *requests* DPMS off,
-        // and any input undoes that request before the drain runs
-        // (`wake_dpms_off_outputs` fires ahead of the locked-input gate), which
-        // re-lights the output instead of clearing it. A retired timer would
-        // leave that output awaited forever. The token is dropped by
+        // and a client's own power request can undo that before the drain
+        // runs, re-lighting the output instead of clearing it (input cannot:
+        // its wake is gated on the confirmation). A retired timer would leave
+        // that output awaited forever. The token is dropped by
         // `finish_lock_confirmation` and the cancel paths, whose identity check
         // is what keeps re-arming from ever confirming a later client's lock.
         let timer = self.loop_handle.insert_source(

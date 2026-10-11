@@ -601,25 +601,17 @@ impl DriftWm {
         if cause != RevealCause::Adopt {
             self.apply_queued_geometry_request(root);
         }
-        // The window is hit-testable again from here, under a pointer that may
-        // not have moved since it was placed. Last, so the answer is taken
-        // against the rect the request above moved it to; the adopt route takes
-        // it again after its own teleport and its own request.
-        self.refresh_pointer_focus();
     }
 
     /// Hand over a fullscreen / maximize the client asked for while its window
     /// was hidden and [`Self::queues_geometry_request`] queued instead of
-    /// applying. Fullscreen wins when a client asked for both. Reports whether
-    /// anything was queued, so a caller that has already taken pointer focus can
-    /// tell whether the window moved out from under it.
-    pub(crate) fn apply_queued_geometry_request(&mut self, root: &WlSurface) -> bool {
+    /// applying. Fullscreen wins when a client asked for both.
+    pub(crate) fn apply_queued_geometry_request(&mut self, root: &WlSurface) {
         let Some(window) = self.window_for_surface(root) else {
-            return false;
+            return;
         };
         let fullscreen = self.pending_fullscreen.remove(root);
         let fit = fullscreen.is_none() && self.pending_fit.remove(root);
-        let applied = fullscreen.is_some() || fit;
         if let Some(client_output) = fullscreen {
             let target = self.resolve_fullscreen_output(root, client_output);
             self.enter_fullscreen(&window, target);
@@ -635,7 +627,6 @@ impl DriftWm {
             self.settle_owed_adopt_rect(&window, root);
             self.decoration_fit(&window);
         }
-        applied
     }
 
     /// Pay off the stable snap rect an adopt is owing, at the rect the adopt put
@@ -697,7 +688,7 @@ impl DriftWm {
     }
 
     /// Queue the adoptions a grab held back for the moment the current dispatch
-    /// unwinds. The adopt re-seats pointer focus and a grab's teardown runs
+    /// unwinds. An adopt moves windows and focus, and a grab's teardown runs
     /// inside the pointer mutex, so it can't run inline from there. Called from
     /// every point a grab this stash can wait on releases: a move grab's disarm,
     /// and the commit that settles a client resize back to `ResizeState::Idle`.
@@ -775,12 +766,8 @@ impl DriftWm {
             // whether the adopt landed or a carve-out dropped the stand-in. Only
             // a first-commit entry ever hides its window, so only that origin
             // can have a queued request to hand over.
-            if origin == AdoptOrigin::FirstCommit && self.apply_queued_geometry_request(&root) {
-                // Both the reveal and the adopt took pointer focus before this
-                // moved the window again, under a pointer that has not moved
-                // since: the answer has to be taken once more at the rect the
-                // request leaves it at.
-                self.refresh_pointer_focus();
+            if origin == AdoptOrigin::FirstCommit {
+                self.apply_queued_geometry_request(&root);
             }
         }
     }
@@ -937,7 +924,6 @@ impl DriftWm {
         } else if let Some(idx) = history_slot {
             self.stage.restore_focus_history_at(&client, idx);
         }
-        self.refresh_pointer_focus();
 
         // Hold the adopted rect from the first frame: the client is still
         // committing buffers at whatever size it mapped with until it acks the
@@ -1089,9 +1075,6 @@ impl DriftWm {
                 }
             }
         }
-        // The suspended window may have sat under the cursor; re-target so a
-        // click no longer lands in dead space.
-        self.refresh_pointer_focus();
         // Arm the debounce rather than writing through: a dismiss is reachable
         // over IPC and from a stand-in's own close, either of which can share a
         // teardown batch (see `session_store_mark_dirty`).
@@ -1598,7 +1581,6 @@ impl DriftWm {
             self.set_suspended_focus(sid, serial);
         }
 
-        self.refresh_pointer_focus();
         // Arm the debounce rather than writing through. This is the site that
         // makes it load-bearing: the conversion runs from `toplevel_destroyed`
         // and cannot tell a user's close from a logout killing the client, so

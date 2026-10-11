@@ -9,6 +9,7 @@ use std::fmt;
 use std::fmt::Write as _;
 use std::io::Write as _;
 use std::os::fd::AsFd as _;
+use std::os::unix::fs::FileExt as _;
 use std::os::unix::net::UnixStream;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
@@ -24,6 +25,7 @@ use wayland_client::protocol::wl_buffer::{self, WlBuffer};
 use wayland_client::protocol::wl_callback::{self, WlCallback};
 use wayland_client::protocol::wl_compositor::WlCompositor;
 use wayland_client::protocol::wl_display::WlDisplay;
+use wayland_client::protocol::wl_keyboard::{self, WlKeyboard};
 use wayland_client::protocol::wl_output::{self, WlOutput};
 use wayland_client::protocol::wl_pointer::{self, WlPointer};
 use wayland_client::protocol::wl_region::WlRegion;
@@ -34,6 +36,10 @@ use wayland_client::protocol::wl_shm_pool::WlShmPool;
 use wayland_client::protocol::wl_surface::{self, WlSurface};
 use wayland_client::protocol::wl_touch::{self, WlTouch};
 use wayland_client::{Connection, Dispatch, Proxy as _, QueueHandle, WEnum};
+use wayland_protocols::ext::idle_notify::v1::client::{
+    ext_idle_notification_v1::{self, ExtIdleNotificationV1},
+    ext_idle_notifier_v1::ExtIdleNotifierV1,
+};
 use wayland_protocols::ext::session_lock::v1::client::{
     ext_session_lock_manager_v1::ExtSessionLockManagerV1,
     ext_session_lock_surface_v1::{self, ExtSessionLockSurfaceV1},
@@ -54,6 +60,13 @@ use wayland_protocols::wp::pointer_constraints::zv1::client::zwp_pointer_constra
     Lifetime, ZwpPointerConstraintsV1,
 };
 use wayland_protocols::wp::single_pixel_buffer::v1::client::wp_single_pixel_buffer_manager_v1::WpSinglePixelBufferManagerV1;
+use wayland_protocols::wp::tablet::zv2::client::{
+    zwp_tablet_manager_v2::ZwpTabletManagerV2,
+    zwp_tablet_pad_v2::ZwpTabletPadV2,
+    zwp_tablet_seat_v2::{self, ZwpTabletSeatV2},
+    zwp_tablet_tool_v2::{self, ZwpTabletToolV2},
+    zwp_tablet_v2::{self, ZwpTabletV2},
+};
 use wayland_protocols::wp::viewporter::client::wp_viewport::WpViewport;
 use wayland_protocols::wp::viewporter::client::wp_viewporter::WpViewporter;
 use wayland_protocols::xdg::activation::v1::client::xdg_activation_token_v1::{
@@ -67,6 +80,8 @@ use wayland_protocols::xdg::shell::client::xdg_positioner::{
 use wayland_protocols::xdg::shell::client::xdg_surface::{self, XdgSurface};
 use wayland_protocols::xdg::shell::client::xdg_toplevel::{self, XdgToplevel};
 use wayland_protocols::xdg::shell::client::xdg_wm_base::{self, XdgWmBase};
+use wayland_protocols_misc::zwp_virtual_keyboard_v1::client::zwp_virtual_keyboard_manager_v1::ZwpVirtualKeyboardManagerV1;
+use wayland_protocols_misc::zwp_virtual_keyboard_v1::client::zwp_virtual_keyboard_v1::ZwpVirtualKeyboardV1;
 use wayland_protocols_wlr::layer_shell::v1::client::zwlr_layer_shell_v1::{self, ZwlrLayerShellV1};
 use wayland_protocols_wlr::layer_shell::v1::client::zwlr_layer_surface_v1::{
     self, ZwlrLayerSurfaceV1,
@@ -102,9 +117,14 @@ pub struct State {
     pub touch: Option<WlTouch>,
     /// Bound alongside the seat, for the same reason as `touch`.
     pub pointer: Option<WlPointer>,
+    /// Bound alongside the seat, for the same reason as `touch`.
+    pub keyboard: Option<WlKeyboard>,
     pub pointer_constraints: Option<ZwpPointerConstraintsV1>,
     pub xdg_activation: Option<XdgActivationV1>,
     pub ext_session_lock_manager: Option<ExtSessionLockManagerV1>,
+    pub idle_notifier: Option<ExtIdleNotifierV1>,
+    pub virtual_keyboard_manager: Option<ZwpVirtualKeyboardManagerV1>,
+    pub tablet_manager: Option<ZwpTabletManagerV2>,
 
     pub windows: Vec<Window>,
     pub layers: Vec<LayerSurface>,
@@ -112,6 +132,9 @@ pub struct State {
     pub session_locks: Vec<Lock>,
     /// Every `wl_touch` event this client has received, oldest first.
     pub touch_events: Vec<TouchEvent>,
+    /// Every `idled`/`resumed` this client's idle notifications have received,
+    /// oldest first.
+    pub idle_events: Vec<IdleEvent>,
     /// Surface-local position carried by every `wl_pointer` enter/motion this
     /// client has received, oldest first.
     pub pointer_positions: Vec<(f64, f64)>,
@@ -128,6 +151,15 @@ pub struct State {
     /// received, oldest first. A scroll a compositor binding consumed sends a
     /// bare frame with no axis inside it, so this stays empty for one.
     pub pointer_axes: Vec<f64>,
+    /// Every `wl_keyboard` event this client's keyboard has received, oldest
+    /// first.
+    pub keyboard_events: Vec<KeyboardEvent>,
+    /// Every `zwp_tablet_tool_v2` event this client has received, oldest
+    /// first. Empty until [`Client::get_tablet_seat`] runs.
+    pub tablet_tool_events: Vec<TabletToolEvent>,
+    /// Every tablet announced to or withdrawn from this client's tablet seat,
+    /// oldest first. Empty until [`Client::get_tablet_seat`] runs.
+    pub tablet_events: Vec<TabletEvent>,
 
     /// The token string from the most recent `xdg_activation_token_v1.done`.
     pub activation_token: Option<String>,
@@ -276,6 +308,12 @@ pub enum LockEvent {
     Finished,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum IdleEvent {
+    Idled,
+    Resumed,
+}
+
 /// A `wl_touch` event, recorded without its payload — these scenarios only
 /// care which events arrived, not their coordinates.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -285,6 +323,66 @@ pub enum TouchEvent {
     Motion,
     Frame,
     Cancel,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum KeyboardEvent {
+    /// The keymap text read out of the event's fd.
+    Keymap(String),
+    Key {
+        key: u32,
+        state: u32,
+    },
+    Modifiers {
+        mods_depressed: u32,
+    },
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TabletEvent {
+    Added,
+    Removed,
+}
+
+/// A `zwp_tablet_tool_v2` event as a tablet-aware client sees it. `Frame` is
+/// recorded like the rest: the protocol makes everything before a frame one
+/// hardware event, so where the frames fall is part of what a stroke looks
+/// like. Serials, the tablet object and the hardware ids are not kept.
+#[derive(Debug, Clone, PartialEq)]
+pub enum TabletToolEvent {
+    Type(u32),
+    Capability(u32),
+    Done,
+    Removed,
+    ProximityIn {
+        surface: WlSurface,
+    },
+    ProximityOut,
+    Down,
+    Up,
+    /// Surface-local.
+    Motion {
+        x: f64,
+        y: f64,
+    },
+    /// Normalised to `0..=65535` by the protocol.
+    Pressure(u32),
+    Distance(u32),
+    Tilt {
+        x: f64,
+        y: f64,
+    },
+    Rotation(f64),
+    Slider(i32),
+    Wheel {
+        degrees: f64,
+        clicks: i32,
+    },
+    Button {
+        button: u32,
+        state: u32,
+    },
+    Frame,
 }
 
 pub struct LockSurface {
@@ -439,18 +537,26 @@ impl Client {
             seat: None,
             touch: None,
             pointer: None,
+            keyboard: None,
             pointer_constraints: None,
             xdg_activation: None,
             ext_session_lock_manager: None,
+            idle_notifier: None,
+            virtual_keyboard_manager: None,
+            tablet_manager: None,
             windows: Vec::new(),
             layers: Vec::new(),
             popups: Vec::new(),
             session_locks: Vec::new(),
             touch_events: Vec::new(),
+            idle_events: Vec::new(),
             pointer_positions: Vec::new(),
             pointer_frames: 0,
             pointer_buttons: Vec::new(),
             pointer_axes: Vec::new(),
+            keyboard_events: Vec::new(),
+            tablet_tool_events: Vec::new(),
+            tablet_events: Vec::new(),
             activation_token: None,
             ext_workspace: ExtWorkspace::default(),
         };
@@ -661,6 +767,25 @@ impl Client {
         self.state.confine_pointer_with_region(surface, rects)
     }
 
+    /// Replace an active confine's region (`zwp_confined_pointer_v1.set_region`).
+    /// Takes effect on the surface's next commit, like the initial region does.
+    pub fn set_confine_region(
+        &mut self,
+        confine: &ZwpConfinedPointerV1,
+        rects: &[(i32, i32, i32, i32)],
+    ) {
+        self.state.set_confine_region(confine, rects);
+    }
+
+    /// Ask to be told when the seat has been idle for `timeout_ms`
+    /// (`ext_idle_notifier_v1.get_idle_notification`); the `idled`/`resumed`
+    /// events land in [`State::idle_events`].
+    pub fn get_idle_notification(&mut self, timeout_ms: u32) -> ExtIdleNotificationV1 {
+        let notifier = self.state.idle_notifier.as_ref().unwrap();
+        let seat = self.state.seat.as_ref().unwrap();
+        notifier.get_idle_notification(timeout_ms, seat, &self.state.qh, ())
+    }
+
     /// Send `ext_session_lock_manager_v1.lock`, entering
     /// `SessionLockHandler::lock` on the compositor. The created lock object
     /// is tracked as this client's most recent [`Lock`]; its `locked`/
@@ -727,6 +852,95 @@ impl Client {
     /// [`Lock`] — the handle back to one a helper made on the caller's behalf.
     pub fn last_lock_surface(&mut self) -> &mut LockSurface {
         self.state.last_lock_surface()
+    }
+
+    pub fn keyboard_events(&self) -> &[KeyboardEvent] {
+        &self.state.keyboard_events
+    }
+
+    /// Take the log, so bind-time and focus-change noise can be dropped before
+    /// the interaction a scenario cares about.
+    pub fn drain_keyboard_events(&mut self) -> Vec<KeyboardEvent> {
+        std::mem::take(&mut self.state.keyboard_events)
+    }
+
+    /// `zwp_virtual_keyboard_manager_v1.create_virtual_keyboard` on this
+    /// client's seat.
+    pub fn create_virtual_keyboard(&mut self) -> ZwpVirtualKeyboardV1 {
+        let manager = self.state.virtual_keyboard_manager.as_ref().unwrap();
+        let seat = self.state.seat.as_ref().unwrap();
+        let keyboard = manager.create_virtual_keyboard(seat, &self.qh, ());
+        self.connection.flush().unwrap();
+        keyboard
+    }
+
+    /// `zwp_tablet_manager_v2.get_tablet_seat` on this client's seat, from
+    /// which point the compositor announces tablets and tools to it. Not sent
+    /// at bind time, so a scenario can make it after the pen is already over
+    /// its window.
+    pub fn get_tablet_seat(&mut self) -> ZwpTabletSeatV2 {
+        let manager = self.state.tablet_manager.as_ref().unwrap();
+        let seat = self.state.seat.as_ref().unwrap();
+        let tablet_seat = manager.get_tablet_seat(seat, &self.qh, ());
+        self.connection.flush().unwrap();
+        tablet_seat
+    }
+
+    /// Take the log, so the tool announce and any hover before the stroke a
+    /// scenario cares about can be dropped.
+    pub fn drain_tablet_tool_events(&mut self) -> Vec<TabletToolEvent> {
+        std::mem::take(&mut self.state.tablet_tool_events)
+    }
+
+    /// Upload `text` as `keyboard`'s XKB keymap through a temp file, flushed
+    /// before the file drops so the fd is still open when the message is
+    /// written to the wire.
+    pub fn virtual_keyboard_keymap(&mut self, keyboard: &ZwpVirtualKeyboardV1, text: &str) {
+        let file = shm_file(text.as_bytes());
+        keyboard.keymap(
+            wl_keyboard::KeymapFormat::XkbV1 as u32,
+            file.as_fd(),
+            text.len() as u32,
+        );
+        self.connection.flush().unwrap();
+    }
+
+    /// `zwp_virtual_keyboard_v1.key`.
+    pub fn virtual_keyboard_key(
+        &mut self,
+        keyboard: &ZwpVirtualKeyboardV1,
+        time: u32,
+        key: u32,
+        pressed: bool,
+    ) {
+        keyboard.key(time, key, pressed as u32);
+        self.connection.flush().unwrap();
+    }
+
+    /// `zwp_virtual_keyboard_v1.modifiers` with only the depressed mask set.
+    pub fn virtual_keyboard_modifiers(
+        &mut self,
+        keyboard: &ZwpVirtualKeyboardV1,
+        mods_depressed: u32,
+    ) {
+        self.virtual_keyboard_modifiers_in_group(keyboard, mods_depressed, 0);
+    }
+
+    /// `zwp_virtual_keyboard_v1.modifiers` with a layout group as well.
+    pub fn virtual_keyboard_modifiers_in_group(
+        &mut self,
+        keyboard: &ZwpVirtualKeyboardV1,
+        mods_depressed: u32,
+        group: u32,
+    ) {
+        keyboard.modifiers(mods_depressed, 0, 0, group);
+        self.connection.flush().unwrap();
+    }
+
+    /// `zwp_virtual_keyboard_v1.destroy`.
+    pub fn virtual_keyboard_destroy(&mut self, keyboard: &ZwpVirtualKeyboardV1) {
+        keyboard.destroy();
+        self.connection.flush().unwrap();
     }
 }
 
@@ -1047,6 +1261,16 @@ impl State {
         );
         region.destroy();
         confine
+    }
+
+    pub fn set_confine_region(
+        &mut self,
+        confine: &ZwpConfinedPointerV1,
+        rects: &[(i32, i32, i32, i32)],
+    ) {
+        let region = self.region_from(rects);
+        confine.set_region(Some(&region));
+        region.destroy();
     }
 
     pub fn lock_session(&mut self) {
@@ -1559,6 +1783,7 @@ impl Dispatch<WlRegistry, ()> for State {
                     let seat: WlSeat = registry.bind(name, version, qh, ());
                     state.touch = Some(seat.get_touch(qh, ()));
                     state.pointer = Some(seat.get_pointer(qh, ()));
+                    state.keyboard = Some(seat.get_keyboard(qh, ()));
                     state.seat = Some(seat);
                 } else if interface == ZwpPointerConstraintsV1::interface().name {
                     let version = min(version, ZwpPointerConstraintsV1::interface().version);
@@ -1576,6 +1801,15 @@ impl Dispatch<WlRegistry, ()> for State {
                 } else if interface == ExtSessionLockManagerV1::interface().name {
                     let version = min(version, ExtSessionLockManagerV1::interface().version);
                     state.ext_session_lock_manager = Some(registry.bind(name, version, qh, ()));
+                } else if interface == ExtIdleNotifierV1::interface().name {
+                    let version = min(version, ExtIdleNotifierV1::interface().version);
+                    state.idle_notifier = Some(registry.bind(name, version, qh, ()));
+                } else if interface == ZwpVirtualKeyboardManagerV1::interface().name {
+                    let version = min(version, ZwpVirtualKeyboardManagerV1::interface().version);
+                    state.virtual_keyboard_manager = Some(registry.bind(name, version, qh, ()));
+                } else if interface == ZwpTabletManagerV2::interface().name {
+                    let version = min(version, ZwpTabletManagerV2::interface().version);
+                    state.tablet_manager = Some(registry.bind(name, version, qh, ()));
                 }
 
                 let global = Global {
@@ -2060,6 +2294,41 @@ impl Dispatch<WlPointer, ()> for State {
     }
 }
 
+impl Dispatch<WlKeyboard, ()> for State {
+    fn event(
+        state: &mut Self,
+        _proxy: &WlKeyboard,
+        event: <WlKeyboard as wayland_client::Proxy>::Event,
+        _data: &(),
+        _conn: &Connection,
+        _qhandle: &QueueHandle<Self>,
+    ) {
+        match event {
+            wl_keyboard::Event::Keymap { fd, size, .. } => {
+                let file = std::fs::File::from(fd);
+                let mut buf = vec![0u8; size as usize];
+                file.read_exact_at(&mut buf, 0).expect("read keymap fd");
+                // The keymap may or may not be NUL-terminated, as in `track_keymap`.
+                let len = buf.iter().position(|&b| b == 0).unwrap_or(buf.len());
+                let text = String::from_utf8(buf[..len].to_vec()).expect("keymap must be UTF-8");
+                state.keyboard_events.push(KeyboardEvent::Keymap(text));
+            }
+            wl_keyboard::Event::Key { key, state: s, .. } => {
+                state.keyboard_events.push(KeyboardEvent::Key {
+                    key,
+                    state: u32::from(s),
+                });
+            }
+            wl_keyboard::Event::Modifiers { mods_depressed, .. } => {
+                state
+                    .keyboard_events
+                    .push(KeyboardEvent::Modifiers { mods_depressed });
+            }
+            _ => (),
+        }
+    }
+}
+
 impl Dispatch<ZwpPointerConstraintsV1, ()> for State {
     fn event(
         _state: &mut Self,
@@ -2147,6 +2416,36 @@ impl Dispatch<XdgPopup, ()> for State {
             }
             xdg_popup::Event::PopupDone => popup.popup_done = true,
             xdg_popup::Event::Repositioned { .. } => (),
+            _ => unreachable!(),
+        }
+    }
+}
+
+impl Dispatch<ExtIdleNotifierV1, ()> for State {
+    fn event(
+        _state: &mut Self,
+        _proxy: &ExtIdleNotifierV1,
+        _event: <ExtIdleNotifierV1 as wayland_client::Proxy>::Event,
+        _data: &(),
+        _conn: &Connection,
+        _qhandle: &QueueHandle<Self>,
+    ) {
+        unreachable!()
+    }
+}
+
+impl Dispatch<ExtIdleNotificationV1, ()> for State {
+    fn event(
+        state: &mut Self,
+        _proxy: &ExtIdleNotificationV1,
+        event: <ExtIdleNotificationV1 as wayland_client::Proxy>::Event,
+        _data: &(),
+        _conn: &Connection,
+        _qhandle: &QueueHandle<Self>,
+    ) {
+        match event {
+            ext_idle_notification_v1::Event::Idled => state.idle_events.push(IdleEvent::Idled),
+            ext_idle_notification_v1::Event::Resumed => state.idle_events.push(IdleEvent::Resumed),
             _ => unreachable!(),
         }
     }
@@ -2250,5 +2549,154 @@ impl Dispatch<XdgActivationTokenV1, ()> for State {
             }
             _ => unreachable!(),
         }
+    }
+}
+
+impl Dispatch<ZwpVirtualKeyboardManagerV1, ()> for State {
+    fn event(
+        _state: &mut Self,
+        _proxy: &ZwpVirtualKeyboardManagerV1,
+        _event: <ZwpVirtualKeyboardManagerV1 as wayland_client::Proxy>::Event,
+        _data: &(),
+        _conn: &Connection,
+        _qhandle: &QueueHandle<Self>,
+    ) {
+        unreachable!()
+    }
+}
+
+impl Dispatch<ZwpVirtualKeyboardV1, ()> for State {
+    fn event(
+        _state: &mut Self,
+        _proxy: &ZwpVirtualKeyboardV1,
+        _event: <ZwpVirtualKeyboardV1 as wayland_client::Proxy>::Event,
+        _data: &(),
+        _conn: &Connection,
+        _qhandle: &QueueHandle<Self>,
+    ) {
+        unreachable!()
+    }
+}
+
+impl Dispatch<ZwpTabletManagerV2, ()> for State {
+    fn event(
+        _state: &mut Self,
+        _proxy: &ZwpTabletManagerV2,
+        _event: <ZwpTabletManagerV2 as wayland_client::Proxy>::Event,
+        _data: &(),
+        _conn: &Connection,
+        _qhandle: &QueueHandle<Self>,
+    ) {
+        unreachable!()
+    }
+}
+
+impl Dispatch<ZwpTabletSeatV2, ()> for State {
+    fn event(
+        state: &mut Self,
+        _proxy: &ZwpTabletSeatV2,
+        event: <ZwpTabletSeatV2 as wayland_client::Proxy>::Event,
+        _data: &(),
+        _conn: &Connection,
+        _qhandle: &QueueHandle<Self>,
+    ) {
+        // The new objects need no bookkeeping: what the tool then reports is
+        // recorded on the tool itself.
+        match event {
+            zwp_tablet_seat_v2::Event::TabletAdded { .. } => {
+                state.tablet_events.push(TabletEvent::Added);
+            }
+            zwp_tablet_seat_v2::Event::ToolAdded { .. } => (),
+            zwp_tablet_seat_v2::Event::PadAdded { .. } => (),
+            _ => unreachable!(),
+        }
+    }
+
+    wayland_client::event_created_child!(State, ZwpTabletSeatV2, [
+        zwp_tablet_seat_v2::EVT_TABLET_ADDED_OPCODE => (ZwpTabletV2, ()),
+        zwp_tablet_seat_v2::EVT_TOOL_ADDED_OPCODE => (ZwpTabletToolV2, ()),
+        zwp_tablet_seat_v2::EVT_PAD_ADDED_OPCODE => (ZwpTabletPadV2, ()),
+    ]);
+}
+
+impl Dispatch<ZwpTabletV2, ()> for State {
+    fn event(
+        state: &mut Self,
+        _proxy: &ZwpTabletV2,
+        event: <ZwpTabletV2 as wayland_client::Proxy>::Event,
+        _data: &(),
+        _conn: &Connection,
+        _qhandle: &QueueHandle<Self>,
+    ) {
+        // The announce (name, ids, path, done) goes unrecorded: the scenarios
+        // read the tool, not the tablet it is on.
+        if let zwp_tablet_v2::Event::Removed = event {
+            state.tablet_events.push(TabletEvent::Removed);
+        }
+    }
+}
+
+impl Dispatch<ZwpTabletToolV2, ()> for State {
+    fn event(
+        state: &mut Self,
+        _proxy: &ZwpTabletToolV2,
+        event: <ZwpTabletToolV2 as wayland_client::Proxy>::Event,
+        _data: &(),
+        _conn: &Connection,
+        _qhandle: &QueueHandle<Self>,
+    ) {
+        let recorded = match event {
+            zwp_tablet_tool_v2::Event::Type { tool_type } => {
+                TabletToolEvent::Type(u32::from(tool_type))
+            }
+            zwp_tablet_tool_v2::Event::HardwareSerial { .. }
+            | zwp_tablet_tool_v2::Event::HardwareIdWacom { .. } => return,
+            zwp_tablet_tool_v2::Event::Capability { capability } => {
+                TabletToolEvent::Capability(u32::from(capability))
+            }
+            zwp_tablet_tool_v2::Event::Done => TabletToolEvent::Done,
+            zwp_tablet_tool_v2::Event::Removed => TabletToolEvent::Removed,
+            zwp_tablet_tool_v2::Event::ProximityIn { surface, .. } => {
+                TabletToolEvent::ProximityIn { surface }
+            }
+            zwp_tablet_tool_v2::Event::ProximityOut => TabletToolEvent::ProximityOut,
+            zwp_tablet_tool_v2::Event::Down { .. } => TabletToolEvent::Down,
+            zwp_tablet_tool_v2::Event::Up => TabletToolEvent::Up,
+            zwp_tablet_tool_v2::Event::Motion { x, y } => TabletToolEvent::Motion { x, y },
+            zwp_tablet_tool_v2::Event::Pressure { pressure } => TabletToolEvent::Pressure(pressure),
+            zwp_tablet_tool_v2::Event::Distance { distance } => TabletToolEvent::Distance(distance),
+            zwp_tablet_tool_v2::Event::Tilt { tilt_x, tilt_y } => TabletToolEvent::Tilt {
+                x: tilt_x,
+                y: tilt_y,
+            },
+            zwp_tablet_tool_v2::Event::Rotation { degrees } => TabletToolEvent::Rotation(degrees),
+            zwp_tablet_tool_v2::Event::Slider { position } => TabletToolEvent::Slider(position),
+            zwp_tablet_tool_v2::Event::Wheel { degrees, clicks } => {
+                TabletToolEvent::Wheel { degrees, clicks }
+            }
+            zwp_tablet_tool_v2::Event::Button {
+                button, state: s, ..
+            } => TabletToolEvent::Button {
+                button,
+                state: u32::from(s),
+            },
+            zwp_tablet_tool_v2::Event::Frame { .. } => TabletToolEvent::Frame,
+            _ => unreachable!(),
+        };
+        state.tablet_tool_events.push(recorded);
+    }
+}
+
+impl Dispatch<ZwpTabletPadV2, ()> for State {
+    fn event(
+        _state: &mut Self,
+        _proxy: &ZwpTabletPadV2,
+        _event: <ZwpTabletPadV2 as wayland_client::Proxy>::Event,
+        _data: &(),
+        _conn: &Connection,
+        _qhandle: &QueueHandle<Self>,
+    ) {
+        // Bound only so `pad_added` has a target; the compositor exposes no
+        // pads and no scenario reads one.
     }
 }

@@ -22,17 +22,19 @@ use smithay::utils::Point;
 use smithay::wayland::input_method::InputMethodKeyboardGrab;
 use smithay::wayland::session_lock::SessionLockHandler;
 use wayland_protocols::ext::session_lock::v1::client::ext_session_lock_surface_v1;
+use wayland_protocols::ext::session_lock::v1::client::ext_session_lock_v1;
 
 use crate::state::session_lock::PENDING_LOCK_DEADLINE;
 use crate::state::{SessionLock, StageWindow};
 
-use super::client::{ClientId, LockEvent, TouchEvent};
+use super::client::{ClientId, IdleEvent, LockEvent, TouchEvent};
 use super::input_backend::{
     FakeDevice, pointer_relative_motion, pointer_to, pointer_to_screen, touch_cancel, touch_down,
     touch_motion, touch_up,
 };
 use super::{
-    Fixture, give_ssd, keyboard_focus, map_window, pointer_focus, server_surface, window_by_app_id,
+    Fixture, give_ssd, keyboard_focus, map_window, pointer_focus, server_surface, warnings_during,
+    window_by_app_id,
 };
 
 fn origin_view(f: &mut Fixture) {
@@ -406,6 +408,66 @@ fn second_lock_is_refused_while_the_first_client_is_alive() {
         "the original client's lock surface must keep keyboard focus after a refused \
          takeover attempt"
     );
+}
+
+/// Pins smithay, not driftwm: `unlock_and_destroy` from any lock object other
+/// than the one holding `LockStatus::Locked` is `invalid_unlock`, never an
+/// unlock of the incumbent's session.
+///
+/// Only the error code is checked: `unlock_and_destroy` is a wire destructor,
+/// so wayland-client has dropped its record of the object by the time the
+/// error naming it comes back, and decodes the interface as a placeholder.
+#[test]
+fn a_refused_clients_unlock_and_destroy_cannot_unlock_the_session() {
+    let mut f = Fixture::new();
+    // The incumbent's lock stays up throughout, so `lock_surfaces` never drains.
+    f.skip_baseline_check();
+    let output = f.add_output(1, (1920, 1080));
+    let a = f.add_client();
+    let b = f.add_client();
+
+    f.client(a).lock_session();
+    f.roundtrip(a);
+    let a_surface = confirm_lock(&mut f, a, &output);
+
+    f.client(b).lock_session();
+    f.roundtrip(b);
+    assert_eq!(
+        f.client(b).lock_events(),
+        &[LockEvent::Finished],
+        "precondition: b's lock request was refused while a's is alive"
+    );
+
+    f.client(b).unlock_session();
+    f.client(b).flush();
+    f.pump(10);
+
+    assert!(
+        f.state().session_lock.is_locked(),
+        "a refused client's unlock_and_destroy must not end a session it never won"
+    );
+    assert_eq!(
+        f.state()
+            .lock_surfaces
+            .get(&output)
+            .unwrap()
+            .wl_surface()
+            .clone(),
+        a_surface,
+        "the incumbent's lock surface must survive a refused client's unlock attempt"
+    );
+
+    let error = f
+        .client(b)
+        .protocol_error()
+        .expect("a refused client's unlock_and_destroy must be a protocol error");
+    assert_eq!(
+        error.code,
+        ext_session_lock_v1::Error::InvalidUnlock as u32,
+        "wrong error code"
+    );
+
+    f.kill_client(b);
 }
 
 /// The crash-recovery path: a locking client dying must not permanently wedge
@@ -844,6 +906,41 @@ fn an_output_going_dark_during_pending_stops_the_desktop_being_painted() {
     );
 }
 
+/// An idle notification that fired during the lock resumes at the unlock, with
+/// no input involved — see the comment in `SessionLockHandler::unlock`. The
+/// DPMS half of the same wake is unobservable here: `set_dpms` returns early
+/// without a seat session, and no fixture has one.
+#[test]
+fn unlocking_resumes_an_idle_notification_without_any_input() {
+    let mut f = Fixture::new();
+    let output = f.add_output(1, (1920, 1080));
+    let id = f.add_client();
+
+    f.client(id).lock_session();
+    f.roundtrip(id);
+    confirm_lock(&mut f, id, &output);
+
+    f.client(id).get_idle_notification(1);
+    f.roundtrip(id);
+    std::thread::sleep(Duration::from_millis(20));
+    f.pump(3);
+    f.roundtrip(id);
+    assert_eq!(
+        f.client(id).state.idle_events,
+        vec![IdleEvent::Idled],
+        "precondition: the notification fired while the session sat locked"
+    );
+
+    f.client(id).unlock_session();
+    f.double_roundtrip(id);
+
+    assert_eq!(
+        f.client(id).state.idle_events,
+        vec![IdleEvent::Idled, IdleEvent::Resumed],
+        "the unlock itself must count as activity"
+    );
+}
+
 /// `new_surface` must refuse a lock surface from any client other than the
 /// one holding the lock — see the comment on that guard for why smithay's own
 /// `locked_outputs` check doesn't already cover this.
@@ -894,11 +991,11 @@ fn new_surface_from_a_refused_client_does_not_overwrite_the_incumbent_lock_surfa
     );
 }
 
-/// A pointer resync deferred by `warp_pointer` and flushed on the next
-/// rendered frame must not re-target focus at the app behind the lock screen —
-/// `focus_under` is lock-unaware, so the gate has to live in the flush itself.
+/// The pull runs every iteration, locked or not, and `focus_under` is
+/// lock-unaware — so the gate has to live in the pull itself, or a pump
+/// mid-lock would re-target focus at the app behind the lock screen.
 #[test]
-fn flush_pointer_resync_does_not_restore_focus_to_the_window_behind_the_lock_screen() {
+fn a_pull_while_locked_does_not_restore_focus_to_the_window_behind_the_lock_screen() {
     let mut f = Fixture::new();
     f.add_output(1, (1920, 1080));
     let id = f.add_client();
@@ -912,14 +1009,14 @@ fn flush_pointer_resync_does_not_restore_focus_to_the_window_behind_the_lock_scr
         "precondition: lock() cleared pointer focus"
     );
 
-    f.state().pending_pointer_resync = true;
-    f.state().flush_pointer_resync();
+    f.pump(2);
+    f.state().refresh_pointer_focus();
 
     assert_eq!(
         pointer_focus(&mut f),
         None,
-        "a resync flushed mid-lock must not restore pointer focus to the app behind \
-         the lock screen"
+        "a pull mid-lock must not restore pointer focus to the app behind the \
+         lock screen"
     );
 }
 
@@ -954,7 +1051,7 @@ fn enter_fullscreen_while_locked_does_not_focus_the_pointer_on_the_window() {
     );
 }
 
-/// `unlock()` must re-seat pointer focus without the pointer moving — the
+/// The pull after `unlock()` must re-seat pointer focus with no motion — the
 /// first click after unlocking has to reach the window under the cursor, not
 /// wait for a motion event to notice it's there.
 #[test]
@@ -973,11 +1070,12 @@ fn unlock_reseats_pointer_focus_without_the_pointer_moving() {
     );
 
     f.state().unlock();
+    f.pump(1);
 
     assert_eq!(
         pointer_focus(&mut f),
         Some(server_surface(&window)),
-        "unlock() must restore pointer focus to the window under the cursor without \
+        "the pull after unlock() must restore pointer focus to the window under the cursor without \
          waiting for the pointer to move"
     );
 }
@@ -1080,6 +1178,7 @@ fn lock_clears_a_touch_close_armed_before_it() {
     // looks at `pending_close`; the stale close would fire on the first
     // lift *after* unlock, which is the scenario this test is about.
     f.state().unlock();
+    f.pump(1);
     f.roundtrip(id);
     touch_up(&mut f, 0);
     f.roundtrip(id);
@@ -1161,6 +1260,25 @@ fn a_touch_cancel_mid_lock_does_not_strip_a_post_lock_touch_of_its_up() {
         f.client(id).state.touch_events.contains(&TouchEvent::Up),
         "a touch that began after the lock must still receive its up after a \
          hardware TouchCancel mid-lock"
+    );
+}
+
+/// `lock` tears the touch sequence down whether or not a finger is down, and
+/// smithay's `cancel` warns when it has nothing to revoke.
+#[test]
+fn locking_with_no_touch_in_flight_logs_no_warning() {
+    let mut f = Fixture::new();
+    f.add_output(1, (1920, 1080));
+    let id = f.add_client();
+
+    let warnings = warnings_during(|| {
+        f.client(id).lock_session();
+        f.roundtrip(id);
+    });
+
+    assert!(
+        !warnings.contains("without prior events"),
+        "a lock with no touch in flight must not reach smithay's cancel: {warnings}"
     );
 }
 
@@ -1407,6 +1525,41 @@ fn locked_is_withheld_until_the_sole_active_output_presents_a_lock_frame() {
         &[LockEvent::Locked],
         "locked arrives once the sole awaited output reports its lock frame \
          presented"
+    );
+}
+
+/// Input holds off re-lighting DPMS-off panels for exactly as long as `locked`
+/// is withheld — see [`SessionLock::confirmation_pending`] for why. Only that
+/// predicate is covered: `set_dpms` returns early without a seat session and
+/// no fixture has one, so neither the wake nor the gate in
+/// `process_input_event` can be observed from here.
+#[test]
+fn dpms_wake_is_withheld_while_locked_is() {
+    let mut f = Fixture::new();
+    f.skip_baseline_check();
+    let output = f.add_output(1, (1920, 1080));
+    f.state().active_outputs.insert(output.clone());
+    let id = f.add_client();
+
+    f.client(id).lock_session();
+    f.roundtrip(id);
+    assert!(
+        !f.state().session_lock.confirmation_pending(),
+        "precondition: no lock surface has committed, so nothing is being \
+         confirmed yet"
+    );
+
+    confirm_lock(&mut f, id, &output);
+    assert!(
+        f.state().session_lock.confirmation_pending(),
+        "while the sole active output owes a lock frame, input must not wake \
+         a panel the backstop is blanking"
+    );
+
+    f.state().stop_awaiting_lock_frame(&output);
+    assert!(
+        !f.state().session_lock.confirmation_pending(),
+        "once locked has been sent, input re-lights panels again"
     );
 }
 
@@ -1961,11 +2114,11 @@ fn a_live_lock_role_still_errors_on_a_commit_before_its_first_ack() {
 }
 
 /// The shape a destroyed role leaves — no pending configure and no ack — is
-/// also the shape of a role driftwm declined to configure: `new_surface`
-/// returns early for a client that does not hold the lock, and smithay's own
-/// initial configure is a no-op with no server-pending state behind it. That
-/// role is live, so its commits must still reach the client as real errors —
-/// which is the whole job of the gate's "driftwm configured this" half.
+/// also the shape of a role nobody configured: smithay never calls
+/// `new_surface` for a role created on a lock it has finished, and sends it no
+/// configure. That role is live, so its commits must still reach the client as
+/// real errors — which is the whole job of the gate's "driftwm configured
+/// this" half.
 #[test]
 fn a_lock_role_driftwm_declined_to_configure_still_errors_on_a_commit() {
     let mut f = Fixture::new();
@@ -2073,14 +2226,15 @@ fn a_lock_role_retaken_after_an_orphaned_commit_is_configured_and_validated_afre
 /// "driftwm configured this" is a verdict on the *role*, and a `wl_surface`
 /// outlives its roles — so the two can disagree. A lock screen that loses the
 /// session between one lock and the next brings its old surfaces to a lock
-/// driftwm refuses: the surface's previous role was configured, the role it
-/// takes now is declined and stays live and unconfigured forever, and its
-/// commits are real violations the client has to be told about. That is why the
-/// verdict is cleared as the new role is taken, above the early return that
-/// declines it — a reset placed after the return would never run on exactly the
-/// role that needs it.
+/// driftwm refuses. smithay never calls `new_surface` for a role created on a
+/// lock it has already finished, so the verdict reset at the top of
+/// `new_surface` cannot run for it: the neutraliser then finds a role nobody
+/// configured on a `wl_surface` driftwm configured once, reads it as an orphan
+/// of that earlier role, and defuses its commits. The refused client is not
+/// told, but nothing of its shows either — the role never becomes a lock
+/// surface, the session stays with the incumbent, and the client lives on.
 #[test]
-fn a_declined_lock_role_inherits_no_configured_verdict_from_the_role_before_it() {
+fn a_declined_lock_role_on_a_surface_configured_before_stays_dark() {
     let mut f = Fixture::new();
     // The incumbent's lock is still up at teardown, so `lock_surfaces` never
     // drains.
@@ -2110,15 +2264,74 @@ fn a_declined_lock_role_inherits_no_configured_verdict_from_the_role_before_it()
             .last_lock_surface()
             .configures_received
             .is_empty(),
-        "precondition: driftwm declined to configure the refused client's role"
+        "precondition: the refused client's role was never configured"
     );
 
     f.client(refused).last_lock_surface().commit();
-    expect_lock_surface_error(
-        &mut f,
-        refused,
-        ext_session_lock_surface_v1::Error::CommitBeforeFirstAck,
-        "a declined role must get smithay's real error even on a `wl_surface` \
-         whose previous role driftwm did configure",
+    f.double_roundtrip(refused);
+
+    assert!(
+        f.state().session_lock.is_locked(),
+        "the incumbent's lock must survive the refused client's commit"
+    );
+    assert_eq!(
+        f.state().lock_surfaces.len(),
+        1,
+        "the refused client's role must never become a lock surface"
+    );
+    map_window(&mut f, refused, "still-alive", (400, 300));
+    assert!(
+        window_by_app_id(&mut f, "still-alive").is_some(),
+        "the refused client survives its defused commit"
+    );
+}
+
+/// A lock surface requested for an output that has already left: the client
+/// held that output's `wl_output` across the removal. It has nowhere to go,
+/// and must not be re-homed onto the survivor — the insert there would evict
+/// the prompt the survivor already shows.
+#[test]
+fn a_lock_surface_for_a_removed_output_does_not_evict_the_survivors_prompt() {
+    let mut f = Fixture::new();
+    f.skip_baseline_check();
+    let survivor = f.add_output(1, (1920, 1080));
+    let leaving = f.add_output(2, (800, 600));
+    let id = f.add_client();
+
+    f.state().focused_output = Some(survivor.clone());
+    f.client(id).lock_session();
+    f.roundtrip(id);
+    let prompt = confirm_lock(&mut f, id, &survivor);
+
+    let stale_output = f.client(id).output(&leaving.name());
+    f.remove_output(&leaving);
+    let orphan = f
+        .client(id)
+        .create_lock_surface(&stale_output)
+        .surface
+        .clone();
+    f.double_roundtrip(id);
+
+    assert!(
+        f.client(id)
+            .lock_surface(&orphan)
+            .configures_received
+            .is_empty(),
+        "a surface for a gone output must not be configured: there is no \
+         output to size it for"
+    );
+    assert_eq!(
+        f.state()
+            .lock_surfaces
+            .get(&survivor)
+            .map(|ls| ls.wl_surface().clone()),
+        Some(prompt),
+        "the survivor must keep the prompt it already shows; a surface for a \
+         gone output must be dropped, not re-homed over it"
+    );
+    assert_eq!(
+        f.state().lock_surfaces.len(),
+        1,
+        "the orphaned surface must not be recorded on any output"
     );
 }
