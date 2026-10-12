@@ -666,6 +666,12 @@ Default: `0.95`
 
 open/close grow/shrink amplitude (1 = fade only)
 
+### `window_effect`
+
+Default: `"default"`
+
+window open/close effect: "default" (scale + fade), "portal" (Rick & Morty C-137 portal)
+
 ## `[background]`
 
 ### `type`

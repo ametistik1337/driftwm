@@ -55,6 +55,7 @@ mod pointer_constraints;
 mod pointer_motion_dedup;
 mod pointer_pull;
 mod popups;
+mod portal_pixels;
 mod pull_cost;
 mod real_clients;
 mod relaunch;

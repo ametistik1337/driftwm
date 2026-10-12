@@ -430,6 +430,17 @@ pub(crate) struct ClosingSnapshot {
     effect: WindowEffect,
     started_at: Instant,
     duration: Duration,
+    seed: (f32, f32),
+}
+
+fn random_portal_seed() -> (f32, f32) {
+    let nanos = std::time::SystemTime::now()
+        .duration_since(std::time::SystemTime::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_nanos();
+    let s1 = ((nanos & 0xFFFF_FFFF) as f64 / 4294967296.0 * 100.0) as f32;
+    let s2 = (((nanos >> 32) & 0xFFFF_FFFF) as f64 / 4294967296.0 * 100.0) as f32;
+    (s1, s2)
 }
 
 impl ClosingSnapshot {
@@ -752,7 +763,8 @@ pub(crate) fn snapshot_canvas(
         progress: 0.0,
         effect,
         started_at: Instant::now(),
-        duration: Duration::from_millis(700),
+        duration: Duration::from_millis(1250),
+        seed: random_portal_seed(),
     })
 }
 
@@ -786,7 +798,8 @@ pub(crate) fn snapshot_screen(
         progress: 0.0,
         effect,
         started_at: Instant::now(),
-        duration: Duration::from_millis(700),
+        duration: Duration::from_millis(1250),
+        seed: random_portal_seed(),
     })
 }
 
@@ -846,11 +859,11 @@ impl ClosingSnapshot {
                     false,
                     self.duration.as_secs_f32(),
                     (size_phys.w as f32, size_phys.h as f32),
-                    (0.2, 1.0, 0.2),
-                    (0.0, 0.0),
+                    (0.4745, 0.9137, 0.0941),
+                    self.seed,
+                    0.3,
                     1.0,
-                    1.0,
-                    1.0,
+                    15.0,
                 );
                 return Some(OutputRenderElements::PortalClosingWindow(
                     WindowTransformElement::new(

@@ -87,12 +87,12 @@ vec4 alphaOver(vec4 under, vec4 over) {
 const float PORTAL_WOBBLE_TIME     = 0.8;
 const float PORTAL_WOBBLE_STRENGTH = 1.2;
 const float GLOW_EDGE_WIDTH        = 5.0;
-const float WINDOW_SCALE           = 0.25;
+const float WINDOW_SCALE           = 0.3;
 const float WINDOW_SQUISH          = 1.0;
 const float WINDOW_TILT            = -1.0;
 
-const float PORTAL_OPEN_TIME  = 0.35;
-const float PORTAL_CLOSE_TIME = 0.35;
+const float PORTAL_OPEN_TIME  = 0.4;
+const float PORTAL_CLOSE_TIME = 0.4;
 const float WINDOW_OPEN_TIME  = 0.35;
 
 vec2 getPortalWobble(vec2 coords) {
@@ -128,7 +128,7 @@ vec2 getWhirledCoords(vec2 coords, float speedMultiplier, float warpMultiplier) 
 
 vec4 getPortalColor() {
     vec2 coords = (v_coords - vec2(0.5)) * 2.0;
-    coords *= 1.4;
+    coords *= 1.5;
 
     float scale = getPortalScale();
     coords /= max(scale * 0.5 + 0.5, 0.01);
@@ -142,7 +142,7 @@ vec4 getPortalColor() {
     layerCoords += displace * 0.1;
     float dist  = length(layerCoords);
     float p_alpha = dist > 1.0 ? 0.0 : 1.0;
-    vec4 color = vec4(mix(darken(u_color, 0.85), darken(u_color, 0.15), pow(clamp(dist, 0.0, 1.0), 5.0)), p_alpha);
+    vec4 color = vec4(mix(darken(u_color, 0.8), darken(u_color, 0.2), pow(clamp(dist, 0.0, 1.0), 5.0)), p_alpha);
     float rand = dot(displace, displace);
 
     // Layer 2: первый слой вихревых полос
