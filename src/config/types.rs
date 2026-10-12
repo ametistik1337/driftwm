@@ -1036,6 +1036,14 @@ pub struct BackendConfig {
     pub max_capture_fps: u32,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Default, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum WindowEffect {
+    #[default]
+    Default,
+    Portal,
+}
+
 #[derive(Clone, Debug, PartialEq)]
 pub struct EffectsConfig {
     pub blur_radius: u32,
@@ -1051,6 +1059,8 @@ pub struct EffectsConfig {
     /// Open/close scale amplitude: windows grow in from this scale and shrink
     /// out to it, in (0, 1]. 1 = pure fade, no scaling.
     pub animation_scale: f64,
+    /// Window open/close shader animation effect
+    pub window_effect: WindowEffect,
 }
 
 impl Default for EffectsConfig {
@@ -1061,6 +1071,7 @@ impl Default for EffectsConfig {
             animate_blur_fps: 20,
             animation_speed: 0.5,
             animation_scale: 0.95,
+            window_effect: WindowEffect::Default,
         }
     }
 }

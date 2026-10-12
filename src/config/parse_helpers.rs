@@ -16,7 +16,7 @@ use super::toml::{
 use super::types::{
     BackendConfig, DecorationConfig, DecorationMode, EffectsConfig, FocusPlacement, FontWeight,
     HotCorners, ModKey, OutputConfig, OutputMode, OutputOutlineSettings, OutputPosition, PassList,
-    Pattern, TitleAlign, WindowRule,
+    Pattern, TitleAlign, WindowEffect, WindowRule,
 };
 
 /// How actionable a config warning is. The error bar has room for one message,
@@ -511,6 +511,17 @@ pub(super) fn parse_effects_config(raw: EffectsFileConfig, errors: &mut Warnings
                 .to_string(),
         );
     }
+    let window_effect = match raw.window_effect.as_deref() {
+        Some("portal") => WindowEffect::Portal,
+        Some("default") | None => WindowEffect::Default,
+        Some(unknown) => {
+            collect_warn(
+                errors,
+                format!("config: unknown window_effect '{unknown}', falling back to 'default'"),
+            );
+            WindowEffect::Default
+        }
+    };
     EffectsConfig {
         blur_radius: raw.blur_radius.unwrap_or(2),
         blur_strength: non_negative(
@@ -532,6 +543,7 @@ pub(super) fn parse_effects_config(raw: EffectsFileConfig, errors: &mut Warnings
             0.95,
             errors,
         ),
+        window_effect,
     }
 }
 

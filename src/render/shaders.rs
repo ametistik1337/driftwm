@@ -703,6 +703,57 @@ pub(super) fn compile_textured_bg_shader(
         .map_err(|e| format!("compile error: {e}"))
 }
 
+const WINDOW_PORTAL_SRC: &str = include_str!("../shaders/window_portal.glsl");
+
+pub const WINDOW_PORTAL_UNIFORMS: &[UniformName<'static>] = &[
+    UniformName {
+        name: Cow::Borrowed("u_progress"),
+        type_: UniformType::_1f,
+    },
+    UniformName {
+        name: Cow::Borrowed("u_for_opening"),
+        type_: UniformType::_1f,
+    },
+    UniformName {
+        name: Cow::Borrowed("u_duration"),
+        type_: UniformType::_1f,
+    },
+    UniformName {
+        name: Cow::Borrowed("u_size"),
+        type_: UniformType::_2f,
+    },
+    UniformName {
+        name: Cow::Borrowed("u_color"),
+        type_: UniformType::_3f,
+    },
+    UniformName {
+        name: Cow::Borrowed("u_seed"),
+        type_: UniformType::_2f,
+    },
+    UniformName {
+        name: Cow::Borrowed("u_rotation_speed"),
+        type_: UniformType::_1f,
+    },
+    UniformName {
+        name: Cow::Borrowed("u_whirling"),
+        type_: UniformType::_1f,
+    },
+    UniformName {
+        name: Cow::Borrowed("u_details"),
+        type_: UniformType::_1f,
+    },
+];
+
+pub fn compile_portal_shader(renderer: &mut GlesRenderer) -> Option<GlesTexProgram> {
+    match renderer.compile_custom_texture_shader(WINDOW_PORTAL_SRC, WINDOW_PORTAL_UNIFORMS) {
+        Ok(shader) => Some(shader),
+        Err(e) => {
+            tracing::error!("Failed to compile portal shader: {e}");
+            None
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

@@ -20,11 +20,12 @@ use smithay::wayland::compositor::{TraversalAction, with_surface_tree_downward};
 
 use driftwm::stage::ElementId;
 
+use driftwm::config::WindowEffect;
 use crate::state::SuspendedWindow;
 
 use super::{
-    OutputRenderElements, TrimmedElement, WindowRenderAnimation, WindowTransformElement,
-    painted_rect, shaders,
+    OutputRenderElements, PortalWindowElement, TrimmedElement, WindowRenderAnimation,
+    WindowTransformElement, painted_rect, shaders,
 };
 
 /// A progress-based effect ends when within this of 1.0 (a 1% alpha residue is
@@ -426,15 +427,27 @@ pub(crate) struct ClosingSnapshot {
     /// Shrink amplitude for a normal close (`effects.animation_scale`).
     scale_amplitude: f64,
     progress: f64,
+    effect: WindowEffect,
+    started_at: Instant,
+    duration: Duration,
 }
 
 impl ClosingSnapshot {
     pub fn tick(&mut self, frame_factor: f64) {
-        self.progress += (1.0 - self.progress) * frame_factor;
+        if self.effect == WindowEffect::Portal {
+            let elapsed = self.started_at.elapsed();
+            self.progress = (elapsed.as_secs_f64() / self.duration.as_secs_f64()).clamp(0.0, 1.0);
+        } else {
+            self.progress += (1.0 - self.progress) * frame_factor;
+        }
     }
 
     pub fn is_done(&self) -> bool {
-        1.0 - self.progress <= DONE_EPSILON
+        if self.effect == WindowEffect::Portal {
+            self.progress >= 1.0
+        } else {
+            1.0 - self.progress <= DONE_EPSILON
+        }
     }
 
     /// Canvas bounds for per-output intersection scoping. Callers must check
@@ -725,6 +738,7 @@ pub(crate) fn snapshot_canvas(
     scale_amplitude: f64,
     alpha_only: bool,
     chrome: Option<&CloseChrome<'_>>,
+    effect: WindowEffect,
 ) -> Option<ClosingSnapshot> {
     let (buffer, bounds, texels) = flatten(renderer, pixels, flatten_scale.max(1.0), chrome)?;
     let canvas_rect = Rectangle::new(window_origin + bounds.loc, bounds.size);
@@ -736,6 +750,9 @@ pub(crate) fn snapshot_canvas(
         alpha_only,
         scale_amplitude,
         progress: 0.0,
+        effect,
+        started_at: Instant::now(),
+        duration: Duration::from_millis(700),
     })
 }
 
@@ -751,6 +768,7 @@ pub(crate) fn snapshot_screen(
     scale_amplitude: f64,
     alpha_only: bool,
     chrome: Option<&CloseChrome<'_>>,
+    effect: WindowEffect,
 ) -> Option<ClosingSnapshot> {
     let (buffer, bounds, texels) = flatten(renderer, pixels, flatten_scale.max(1.0), chrome)?;
     let loc = Point::from((
@@ -766,6 +784,9 @@ pub(crate) fn snapshot_screen(
         alpha_only,
         scale_amplitude,
         progress: 0.0,
+        effect,
+        started_at: Instant::now(),
+        duration: Duration::from_millis(700),
     })
 }
 
@@ -778,14 +799,8 @@ impl ClosingSnapshot {
         camera: Point<f64, Logical>,
         zoom: f64,
         output_scale: f64,
+        portal_shader: Option<&GlesTexProgram>,
     ) -> Option<OutputRenderElements> {
-        let alpha = fade_out_alpha(self.progress);
-        let close_scale = if self.alpha_only {
-            1.0
-        } else {
-            1.0 - (1.0 - self.scale_amplitude) * self.progress
-        };
-
         let (screen_loc, screen_size): (Point<f64, Logical>, Size<f64, Logical>) =
             if let Some((pin_output, screen_rect)) = &self.pinned {
                 if pin_output != output_name {
@@ -813,6 +828,48 @@ impl ClosingSnapshot {
             loc_phys.x + size_phys.w / 2.0,
             loc_phys.y + size_phys.h / 2.0,
         ));
+
+        if self.effect == WindowEffect::Portal {
+            if let Some(shader) = portal_shader {
+                let texture = TextureRenderElement::from_texture_buffer(
+                    loc_phys,
+                    &self.buffer,
+                    Some(1.0),
+                    Some(super::texel_src(self.texels)),
+                    Some(screen_size.to_i32_round()),
+                    Kind::Unspecified,
+                );
+                let portal = PortalWindowElement::new(
+                    texture,
+                    shader.clone(),
+                    self.progress as f32,
+                    false,
+                    self.duration.as_secs_f32(),
+                    (size_phys.w as f32, size_phys.h as f32),
+                    (0.2, 1.0, 0.2),
+                    (0.0, 0.0),
+                    1.0,
+                    1.0,
+                    1.0,
+                );
+                return Some(OutputRenderElements::PortalClosingWindow(
+                    WindowTransformElement::new(
+                        portal,
+                        center,
+                        Point::default(),
+                        Scale::from(1.0),
+                    ),
+                ));
+            }
+        }
+
+        let alpha = fade_out_alpha(self.progress);
+        let close_scale = if self.alpha_only {
+            1.0
+        } else {
+            1.0 - (1.0 - self.scale_amplitude) * self.progress
+        };
+
         let texture = TextureRenderElement::from_texture_buffer(
             loc_phys,
             &self.buffer,
@@ -840,6 +897,7 @@ pub(crate) fn render_snapshots_for_output(
     camera: Point<f64, Logical>,
     zoom: f64,
     output_scale: f64,
+    portal_shader: Option<&GlesTexProgram>,
 ) -> Vec<OutputRenderElements> {
     snapshots
         .iter()
@@ -849,7 +907,7 @@ pub(crate) fn render_snapshots_for_output(
                 |(o, _)| o == output_name,
             )
         })
-        .filter_map(|s| s.render_element(output_name, camera, zoom, output_scale))
+        .filter_map(|s| s.render_element(output_name, camera, zoom, output_scale, portal_shader))
         .collect()
 }
 

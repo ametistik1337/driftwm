@@ -59,6 +59,7 @@ pub(super) struct EffectsFileConfig {
     pub animate_blur_fps: Option<u32>,
     pub animation_speed: Option<f64>,
     pub animation_scale: Option<f64>,
+    pub window_effect: Option<String>,
 }
 
 #[derive(Serialize, Deserialize, Default)]

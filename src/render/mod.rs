@@ -28,8 +28,8 @@ pub(crate) use closing::{
 };
 pub use cursor::build_cursor_elements;
 pub use elements::{
-    OutputRenderElements, PixelSnapRescaleElement, RoundedCornerElement, TileShaderElement,
-    TrimmedElement, WindowTransformElement, painted_rect, painted_size,
+    OutputRenderElements, PixelSnapRescaleElement, PortalWindowElement, RoundedCornerElement,
+    TileShaderElement, TrimmedElement, WindowTransformElement, painted_rect, painted_size,
 };
 pub use error_bar::ErrorBarCache;
 pub use lifecycle::{
@@ -40,7 +40,7 @@ pub use screenshot::capture_region_to_png;
 pub use shader_chunks::ShaderChunkCache;
 pub use shaders::{
     BorderPhysKey, ShadowPhysKey, compile_border_shader, compile_corner_clip_shader,
-    compile_shadow_shader,
+    compile_portal_shader, compile_shadow_shader,
 };
 pub use tile_chunks::BgChunkCache;
 
@@ -1635,6 +1635,7 @@ pub fn compose_frame(
             camera,
             zoom,
             output_scale,
+            state.render.portal_shader.as_ref(),
         );
         // Collected before the per-fade mutable borrows of `state` below.
         // `focused`/`launching` are the values frozen at fade creation, never a
