@@ -202,14 +202,14 @@ impl WobblyState {
         }
     }
 
-    /// Release grab constraint on mouse/touch button release, letting the window oscillate to settle.
+    /// Release grab on mouse/touch button release. The grab constraint point remains
+    /// anchored to its target rest origin so the mass grid oscillates and settles.
     pub fn on_release(&mut self) {
         self.is_dragging = false;
         self.snapped_x = false;
         self.snapped_y = false;
-        for c in &mut self.constraint {
-            *c = false;
-        }
+        // In KWin, wwi.status becomes Free but the constrained grab vertex remains
+        // active so the window oscillates towards its drop target and naturally settles.
     }
 
     /// 8-neighborhood ring linear mean blur filter for vectors,
@@ -306,8 +306,9 @@ impl WobblyState {
             self.acceleration[0] = Pair::new(mv.x * stiffness, mv.y * stiffness);
         } else {
             let pos = self.position[0];
-            let ax = ((self.position[1].x - pos.x) - x_length) * stiffness + (self.position[4].x - pos.x) * stiffness;
-            let ay = ((self.position[4].y - pos.y) - y_length) * stiffness + (self.position[1].y - pos.y) * stiffness;
+            let home = Pair::new(self.origin[0].x - pos.x, self.origin[0].y - pos.y);
+            let ax = ((self.position[1].x - pos.x) - x_length) * stiffness + (self.position[4].x - pos.x) * stiffness + home.x * stiffness * 0.35;
+            let ay = ((self.position[4].y - pos.y) - y_length) * stiffness + (self.position[1].y - pos.y) * stiffness + home.y * stiffness * 0.35;
             self.acceleration[0] = Pair::new(ax * 0.5, ay * 0.5);
         }
 
@@ -317,8 +318,9 @@ impl WobblyState {
             self.acceleration[3] = Pair::new(mv.x * stiffness, mv.y * stiffness);
         } else {
             let pos = self.position[3];
-            let ax = (x_length - (pos.x - self.position[2].x)) * stiffness + (self.position[7].x - pos.x) * stiffness;
-            let ay = ((self.position[7].y - pos.y) - y_length) * stiffness + (self.position[2].y - pos.y) * stiffness;
+            let home = Pair::new(self.origin[3].x - pos.x, self.origin[3].y - pos.y);
+            let ax = (x_length - (pos.x - self.position[2].x)) * stiffness + (self.position[7].x - pos.x) * stiffness + home.x * stiffness * 0.35;
+            let ay = ((self.position[7].y - pos.y) - y_length) * stiffness + (self.position[2].y - pos.y) * stiffness + home.y * stiffness * 0.35;
             self.acceleration[3] = Pair::new(ax * 0.5, ay * 0.5);
         }
 
@@ -328,8 +330,9 @@ impl WobblyState {
             self.acceleration[12] = Pair::new(mv.x * stiffness, mv.y * stiffness);
         } else {
             let pos = self.position[12];
-            let ax = ((self.position[13].x - pos.x) - x_length) * stiffness + (self.position[8].x - pos.x) * stiffness;
-            let ay = (y_length - (pos.y - self.position[8].y)) * stiffness + (self.position[13].y - pos.y) * stiffness;
+            let home = Pair::new(self.origin[12].x - pos.x, self.origin[12].y - pos.y);
+            let ax = ((self.position[13].x - pos.x) - x_length) * stiffness + (self.position[8].x - pos.x) * stiffness + home.x * stiffness * 0.35;
+            let ay = (y_length - (pos.y - self.position[8].y)) * stiffness + (self.position[13].y - pos.y) * stiffness + home.y * stiffness * 0.35;
             self.acceleration[12] = Pair::new(ax * 0.5, ay * 0.5);
         }
 
@@ -339,8 +342,9 @@ impl WobblyState {
             self.acceleration[15] = Pair::new(mv.x * stiffness, mv.y * stiffness);
         } else {
             let pos = self.position[15];
-            let ax = (x_length - (pos.x - self.position[14].x)) * stiffness + (self.position[11].x - pos.x) * stiffness;
-            let ay = (y_length - (pos.y - self.position[11].y)) * stiffness + (self.position[14].y - pos.y) * stiffness;
+            let home = Pair::new(self.origin[15].x - pos.x, self.origin[15].y - pos.y);
+            let ax = (x_length - (pos.x - self.position[14].x)) * stiffness + (self.position[11].x - pos.x) * stiffness + home.x * stiffness * 0.35;
+            let ay = (y_length - (pos.y - self.position[11].y)) * stiffness + (self.position[14].y - pos.y) * stiffness + home.y * stiffness * 0.35;
             self.acceleration[15] = Pair::new(ax * 0.5, ay * 0.5);
         }
 
@@ -352,12 +356,15 @@ impl WobblyState {
                 self.acceleration[i] = Pair::new(mv.x * stiffness, mv.y * stiffness);
             } else {
                 let pos = self.position[i];
+                let home = Pair::new(self.origin[i].x - pos.x, self.origin[i].y - pos.y);
                 let ax = (x_length - (pos.x - self.position[i - 1].x)) * stiffness
                     + ((self.position[i + 1].x - pos.x) - x_length) * stiffness
-                    + (self.position[i + 4].x - pos.x) * stiffness;
+                    + (self.position[i + 4].x - pos.x) * stiffness
+                    + home.x * stiffness * 0.35;
                 let ay = ((self.position[i + 4].y - pos.y) - y_length) * stiffness
                     + (self.position[i - 1].y - pos.y) * stiffness
-                    + (self.position[i + 1].y - pos.y) * stiffness;
+                    + (self.position[i + 1].y - pos.y) * stiffness
+                    + home.y * stiffness * 0.35;
                 self.acceleration[i] = Pair::new(ax / 3.0, ay / 3.0);
             }
         }
@@ -369,12 +376,15 @@ impl WobblyState {
                 self.acceleration[i] = Pair::new(mv.x * stiffness, mv.y * stiffness);
             } else {
                 let pos = self.position[i];
+                let home = Pair::new(self.origin[i].x - pos.x, self.origin[i].y - pos.y);
                 let ax = (x_length - (pos.x - self.position[i - 1].x)) * stiffness
                     + ((self.position[i + 1].x - pos.x) - x_length) * stiffness
-                    + (self.position[i - 4].x - pos.x) * stiffness;
+                    + (self.position[i - 4].x - pos.x) * stiffness
+                    + home.x * stiffness * 0.35;
                 let ay = (y_length - (pos.y - self.position[i - 4].y)) * stiffness
                     + (self.position[i - 1].y - pos.y) * stiffness
-                    + (self.position[i + 1].y - pos.y) * stiffness;
+                    + (self.position[i + 1].y - pos.y) * stiffness
+                    + home.y * stiffness * 0.35;
                 self.acceleration[i] = Pair::new(ax / 3.0, ay / 3.0);
             }
         }
@@ -387,12 +397,15 @@ impl WobblyState {
                 self.acceleration[i] = Pair::new(mv.x * stiffness, mv.y * stiffness);
             } else {
                 let pos = self.position[i];
+                let home = Pair::new(self.origin[i].x - pos.x, self.origin[i].y - pos.y);
                 let ax = ((self.position[i + 1].x - pos.x) - x_length) * stiffness
                     + (self.position[i - 4].x - pos.x) * stiffness
-                    + (self.position[i + 4].x - pos.x) * stiffness;
+                    + (self.position[i + 4].x - pos.x) * stiffness
+                    + home.x * stiffness * 0.35;
                 let ay = (y_length - (pos.y - self.position[i - 4].y)) * stiffness
                     + ((self.position[i + 4].y - pos.y) - y_length) * stiffness
-                    + (self.position[i + 1].y - pos.y) * stiffness;
+                    + (self.position[i + 1].y - pos.y) * stiffness
+                    + home.y * stiffness * 0.35;
                 self.acceleration[i] = Pair::new(ax / 3.0, ay / 3.0);
             }
         }
@@ -405,12 +418,15 @@ impl WobblyState {
                 self.acceleration[i] = Pair::new(mv.x * stiffness, mv.y * stiffness);
             } else {
                 let pos = self.position[i];
+                let home = Pair::new(self.origin[i].x - pos.x, self.origin[i].y - pos.y);
                 let ax = (x_length - (pos.x - self.position[i - 1].x)) * stiffness
                     + (self.position[i - 4].x - pos.x) * stiffness
-                    + (self.position[i + 4].x - pos.x) * stiffness;
+                    + (self.position[i + 4].x - pos.x) * stiffness
+                    + home.x * stiffness * 0.35;
                 let ay = (y_length - (pos.y - self.position[i - 4].y)) * stiffness
                     + ((self.position[i + 4].y - pos.y) - y_length) * stiffness
-                    + (self.position[i - 1].y - pos.y) * stiffness;
+                    + (self.position[i - 1].y - pos.y) * stiffness
+                    + home.y * stiffness * 0.35;
                 self.acceleration[i] = Pair::new(ax / 3.0, ay / 3.0);
             }
         }
@@ -424,14 +440,17 @@ impl WobblyState {
                     self.acceleration[idx] = Pair::new(mv.x * stiffness, mv.y * stiffness);
                 } else {
                     let pos = self.position[idx];
+                    let home = Pair::new(self.origin[idx].x - pos.x, self.origin[idx].y - pos.y);
                     let ax = ((self.position[idx - 1].x - pos.x) - x_length) * stiffness
                         + (x_length - (pos.x - self.position[idx + 1].x)) * stiffness
                         + (self.position[idx - 4].x - pos.x) * stiffness
-                        + (self.position[idx + 4].x - pos.x) * stiffness;
+                        + (self.position[idx + 4].x - pos.x) * stiffness
+                        + home.x * stiffness * 0.30;
                     let ay = (y_length - (pos.y - self.position[idx - 4].y)) * stiffness
                         + ((self.position[idx + 4].y - pos.y) - y_length) * stiffness
                         + (self.position[idx - 1].y - pos.y) * stiffness
-                        + (self.position[idx + 1].y - pos.y) * stiffness;
+                        + (self.position[idx + 1].y - pos.y) * stiffness
+                        + home.y * stiffness * 0.30;
                     self.acceleration[idx] = Pair::new(ax / 4.0, ay / 4.0);
                 }
             }
@@ -442,6 +461,7 @@ impl WobblyState {
 
         // Integrate velocities
         let mut acc_sum = 0.0;
+        let dt_factor = time_ms * 0.6;
         for i in 0..16 {
             let mut acc = self.acceleration[i];
             fix_vector_bounds(&mut acc, Self::MIN_ACCELERATION, Self::MAX_ACCELERATION);
@@ -455,8 +475,8 @@ impl WobblyState {
                 d_y *= 0.6;
             }
 
-            self.velocity[i].x = acc.x * time_ms + self.velocity[i].x * d_x;
-            self.velocity[i].y = acc.y * time_ms + self.velocity[i].y * d_y;
+            self.velocity[i].x = acc.x * dt_factor + self.velocity[i].x * d_x;
+            self.velocity[i].y = acc.y * dt_factor + self.velocity[i].y * d_y;
             acc_sum += acc.x.abs() + acc.y.abs();
         }
 
@@ -469,8 +489,8 @@ impl WobblyState {
             let mut vel = self.velocity[i];
             fix_vector_bounds(&mut vel, Self::MIN_VELOCITY, Self::MAX_VELOCITY);
 
-            self.position[i].x += vel.x * time_ms * move_factor;
-            self.position[i].y += vel.y * time_ms * move_factor;
+            self.position[i].x += vel.x * dt_factor * move_factor;
+            self.position[i].y += vel.y * dt_factor * move_factor;
             vel_sum += vel.x.abs() + vel.y.abs();
         }
 
@@ -527,30 +547,68 @@ impl WobblyState {
     }
 
     /// Calculate visual location and size of the wobbly window using the 4x4 Bezier surface,
-    /// matching KWin quad deformation bounding box.
+    /// combined with mass center displacement and subtle squash & stretch deformation.
     pub fn visual_rect(&self) -> Rectangle<f64, Logical> {
-        let center = compute_bezier_point(&self.position, Pair::new(0.5, 0.5));
-        let top = compute_bezier_point(&self.position, Pair::new(0.5, 0.0));
-        let bottom = compute_bezier_point(&self.position, Pair::new(0.5, 1.0));
-        let left = compute_bezier_point(&self.position, Pair::new(0.0, 0.5));
-        let right = compute_bezier_point(&self.position, Pair::new(1.0, 0.5));
+        let center_bezier = compute_bezier_point(&self.position, Pair::new(0.5, 0.5));
 
-        let mut w = (right.x - left.x).abs().max(20.0);
-        let mut h = (bottom.y - top.y).abs().max(20.0);
-        let mut loc = Point::from((center.x - w / 2.0, center.y - h / 2.0));
+        // Average displacement of all 16 mass points relative to target geometry
+        let mut avg_offset_x = 0.0;
+        let mut avg_offset_y = 0.0;
+        for i in 0..16 {
+            avg_offset_x += self.position[i].x - self.origin[i].x;
+            avg_offset_y += self.position[i].y - self.origin[i].y;
+        }
+        avg_offset_x /= 16.0;
+        avg_offset_y /= 16.0;
 
-        // When magnetically snapped, anchor the snapped axis directly to the snap target
-        // and lock the size along that axis to target_rect so no scaling artifacts or gaps occur.
+        let target_center_x = self.target_rect.loc.x + self.target_rect.size.w / 2.0;
+        let target_center_y = self.target_rect.loc.y + self.target_rect.size.h / 2.0;
+
+        // Combine Bezier center and grid center of mass for a smooth, organic jelly lag
+        let center_x = 0.5 * center_bezier.x + 0.5 * (target_center_x + avg_offset_x);
+        let center_y = 0.5 * center_bezier.y + 0.5 * (target_center_y + avg_offset_y);
+
+        // Average deformed width across all 4 horizontal rows
+        let mut avg_w = 0.0;
+        for j in 0..4 {
+            let left = self.position[j * 4].x;
+            let right = self.position[j * 4 + 3].x;
+            avg_w += (right - left).abs();
+        }
+        avg_w /= 4.0;
+
+        // Average deformed height across all 4 vertical columns
+        let mut avg_h = 0.0;
+        for i in 0..4 {
+            let top = self.position[i].y;
+            let bottom = self.position[12 + i].y;
+            avg_h += (bottom - top).abs();
+        }
+        avg_h /= 4.0;
+
+        // Softly clamp subtle squash & stretch to ±7% so client buffer rendering stays crisp
+        let min_w = self.target_rect.size.w * 0.93;
+        let max_w = self.target_rect.size.w * 1.07;
+        let min_h = self.target_rect.size.h * 0.93;
+        let max_h = self.target_rect.size.h * 1.07;
+        let mut w = avg_w.clamp(min_w, max_w).max(20.0);
+        let mut h = avg_h.clamp(min_h, max_h).max(20.0);
+
+        let mut loc_x = center_x - w / 2.0;
+        let mut loc_y = center_y - h / 2.0;
+
+        // Magnetic snap: anchor the snapped axis directly to the snap target
+        // with exact 0px tolerance and lock width/height to eliminate any gaps or overlaps
         if self.snapped_x {
-            loc.x = self.target_rect.loc.x;
+            loc_x = self.target_rect.loc.x;
             w = self.target_rect.size.w;
         }
         if self.snapped_y {
-            loc.y = self.target_rect.loc.y;
+            loc_y = self.target_rect.loc.y;
             h = self.target_rect.size.h;
         }
 
-        Rectangle::new(loc, Size::from((w, h)))
+        Rectangle::new(Point::from((loc_x, loc_y)), Size::from((w, h)))
     }
 
     /// Return horizontal and vertical shear angles based on Bezier edge offsets.
@@ -617,8 +675,9 @@ mod tests {
         wobbly.on_move(rect2, grab2, false, false);
 
         // Advance simulation for 5 frames while dragging
-        for _ in 0..5 {
+        for i in 0..5 {
             wobbly.step(0.016, 0.15, 0.80, 0.10);
+            println!("frame {}: vr={:?}, target_rect={:?}", i, wobbly.visual_rect(), rect2);
         }
 
         // Release the window
@@ -627,16 +686,75 @@ mod tests {
 
         // Simulate until settled
         let mut settled = false;
+        let mut release_steps = 0;
         for _ in 0..300 {
+            release_steps += 1;
             if !wobbly.step(0.016, 0.15, 0.80, 0.10) {
                 settled = true;
                 break;
             }
         }
+        println!("release_steps = {release_steps}");
         assert!(settled, "KWin wobbly window must settle after release");
         let vr = wobbly.visual_rect();
         assert!((vr.loc.x - rect2.loc.x).abs() < 0.5);
         assert!((vr.loc.y - rect2.loc.y).abs() < 0.5);
+    }
+
+    #[test]
+    fn kwin_wobbly_real_continuous_motion() {
+        let rect0 = Rectangle::new(Point::from((100.0, 100.0)), Size::from((400.0, 300.0)));
+        let grab0 = Point::from((200.0, 120.0));
+        let mut wobbly = WobblyState::new(rect0, grab0);
+
+        let mut cur_x = 100.0;
+        let mut cur_y = 100.0;
+        for frame in 0..15 {
+            cur_x += 4.0;
+            cur_y += 3.0;
+            let target = Rectangle::new(Point::from((cur_x, cur_y)), Size::from((400.0, 300.0)));
+            let grab = Point::from((cur_x + 100.0, cur_y + 20.0));
+            wobbly.on_move(target, grab, false, false);
+            wobbly.step(0.016, 0.10, 0.88, 0.12);
+            let vr = wobbly.visual_rect();
+            let dx = vr.loc.x - target.loc.x;
+            let dy = vr.loc.y - target.loc.y;
+            println!("frame {frame}: target=({cur_x:.1}, {cur_y:.1}), vr=({:.1}, {:.1}), lag=({dx:.2}, {dy:.2}), size=({:.1}, {:.1})", vr.loc.x, vr.loc.y, vr.size.w, vr.size.h);
+        }
+
+        // Mouse halts moving for 10 frames
+        let target_halt = Rectangle::new(Point::from((cur_x, cur_y)), Size::from((400.0, 300.0)));
+        let grab_halt = Point::from((cur_x + 100.0, cur_y + 20.0));
+        for frame in 15..25 {
+            wobbly.on_move(target_halt, grab_halt, false, false);
+            wobbly.step(0.016, 0.10, 0.88, 0.12);
+            let vr = wobbly.visual_rect();
+            let dx = vr.loc.x - target_halt.loc.x;
+            let dy = vr.loc.y - target_halt.loc.y;
+            println!("halt frame {frame}: vr=({:.1}, {:.1}), lag=({dx:.2}, {dy:.2}), size=({:.1}, {:.1})", vr.loc.x, vr.loc.y, vr.size.w, vr.size.h);
+        }
+
+        // Mouse button released
+        wobbly.on_release();
+        let mut release_steps = 0;
+        let mut settled = false;
+        for frame in 25..300 {
+            release_steps += 1;
+            let active = wobbly.step(0.016, 0.10, 0.88, 0.12);
+            let vr = wobbly.visual_rect();
+            let dx = vr.loc.x - target_halt.loc.x;
+            let dy = vr.loc.y - target_halt.loc.y;
+            if frame < 40 {
+                println!("release frame {frame}: vr=({:.1}, {:.1}), lag=({dx:.2}, {dy:.2}), size=({:.1}, {:.1})", vr.loc.x, vr.loc.y, vr.size.w, vr.size.h);
+            }
+            if !active {
+                settled = true;
+                break;
+            }
+        }
+        println!("total release steps: {release_steps}");
+        assert!(settled);
+        assert!(release_steps >= 5, "Window must oscillate after release");
     }
 
     #[test]
