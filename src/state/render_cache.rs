@@ -22,6 +22,10 @@ pub struct RenderCache {
     pub tv_shader: Option<GlesTexProgram>,
     pub doom_shader: Option<GlesTexProgram>,
     pub anomaly_shader: Option<GlesTexProgram>,
+    pub custom_window_shaders:
+        HashMap<std::path::PathBuf, (GlesTexProgram, Option<std::time::SystemTime>)>,
+    pub preset_shader_overrides:
+        HashMap<String, (GlesTexProgram, Option<std::time::SystemTime>)>,
     pub background_shader: Option<GlesPixelProgram>,
     /// `u_time` is referenced — drives per-frame redraws.
     pub background_is_animated: bool,
@@ -127,7 +131,76 @@ impl RenderCache {
             cached_outlines: HashMap::new(),
             chunk_bg_shader: None,
             cached_tile_chunks: HashMap::new(),
+            custom_window_shaders: HashMap::new(),
+            preset_shader_overrides: HashMap::new(),
             cached_shader_chunks: HashMap::new(),
+        }
+    }
+
+    /// Get or compile a custom window shader from a file path.
+    /// Checks mtime; if changed or not compiled yet, recompiles.
+    /// If compile fails, returns None.
+    pub fn get_or_compile_custom_window_shader(
+        &mut self,
+        renderer: &mut smithay::backend::renderer::gles::GlesRenderer,
+        path: &std::path::Path,
+    ) -> Option<GlesTexProgram> {
+        let mtime = std::fs::metadata(path).and_then(|m| m.modified()).ok();
+        if let Some((prog, cached_mtime)) = self.custom_window_shaders.get(path) {
+            if *cached_mtime == mtime && mtime.is_some() {
+                return Some(prog.clone());
+            }
+        }
+
+        match std::fs::read_to_string(path) {
+            Ok(src) => match crate::render::compile_custom_window_shader(renderer, &src) {
+                Ok(prog) => {
+                    tracing::info!("Compiled custom window shader from {:?}", path);
+                    self.custom_window_shaders
+                        .insert(path.to_path_buf(), (prog.clone(), mtime));
+                    Some(prog)
+                }
+                Err(e) => {
+                    tracing::error!("Failed to compile custom window shader {:?}: {e}", path);
+                    None
+                }
+            },
+            Err(e) => {
+                tracing::warn!("Failed to read custom window shader {:?}: {e}", path);
+                None
+            }
+        }
+    }
+
+    /// Check if a preset has an override file on disk in ~/.config/driftwm/shaders/<preset>.glsl
+    /// and compile/cache it. Returns Some(program) if override is present and compiles.
+    pub fn get_or_compile_preset_override(
+        &mut self,
+        renderer: &mut smithay::backend::renderer::gles::GlesRenderer,
+        preset: &str,
+    ) -> Option<GlesTexProgram> {
+        let override_path = driftwm::config::shader_catalog::preset_disk_override(preset)?;
+        let mtime = std::fs::metadata(&override_path).and_then(|m| m.modified()).ok();
+        if let Some((prog, cached_mtime)) = self.preset_shader_overrides.get(preset) {
+            if *cached_mtime == mtime && mtime.is_some() {
+                return Some(prog.clone());
+            }
+        }
+
+        match std::fs::read_to_string(&override_path) {
+            Ok(src) => match crate::render::compile_custom_window_shader(renderer, &src) {
+                Ok(prog) => {
+                    tracing::info!("Compiled preset override shader for '{preset}' from {:?}", override_path);
+                    self.preset_shader_overrides
+                        .insert(preset.to_string(), (prog.clone(), mtime));
+                    Some(prog)
+                }
+                Err(e) => {
+                    tracing::error!("Failed to compile preset override for '{preset}': {e}");
+                    None
+                }
+            },
+            Err(_) => None,
         }
     }
 

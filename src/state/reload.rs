@@ -97,6 +97,8 @@ impl DriftWm {
         self.render.background_uses_camera = false;
         self.render.background_uses_zoom = false;
         self.render.cached_bg.clear();
+        self.render.custom_window_shaders.clear();
+        self.render.preset_shader_overrides.clear();
         // The shared backdrop is a blur of the background that just changed, at
         // radius/strength settings that may have changed with it.
         self.render.shared_blur.clear();

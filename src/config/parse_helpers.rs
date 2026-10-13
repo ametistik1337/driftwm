@@ -518,12 +518,9 @@ pub(super) fn parse_effects_config(raw: EffectsFileConfig, errors: &mut Warnings
         Some("doom") => WindowEffect::Doom,
         Some("anomaly") => WindowEffect::Anomaly,
         Some("default") | None => WindowEffect::Default,
-        Some(unknown) => {
-            collect_warn(
-                errors,
-                format!("config: unknown window_effect '{unknown}', falling back to 'default'"),
-            );
-            WindowEffect::Default
+        Some(custom) => {
+            let path = super::shader_catalog::resolve_shader_path(custom);
+            WindowEffect::Custom(path)
         }
     };
     EffectsConfig {
@@ -548,6 +545,7 @@ pub(super) fn parse_effects_config(raw: EffectsFileConfig, errors: &mut Warnings
             errors,
         ),
         window_effect,
+        window_effect_duration_ms: raw.window_effect_duration_ms,
     }
 }
 

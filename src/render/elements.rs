@@ -624,6 +624,7 @@ render_elements! {
     TvClosingWindow=WindowTransformElement<TvWindowElement>,
     DoomClosingWindow=WindowTransformElement<DoomWindowElement>,
     AnomalyClosingWindow=WindowTransformElement<AnomalyWindowElement>,
+    CustomClosingWindow=WindowTransformElement<CustomWindowElement>,
     Layer=WaylandSurfaceRenderElement<GlesRenderer>,
     Cursor=MemoryRenderBufferRenderElement<GlesRenderer>,
     CursorSurface=smithay::backend::renderer::element::Wrap<WaylandSurfaceRenderElement<GlesRenderer>>,
@@ -1502,6 +1503,141 @@ impl Element for AnomalyWindowElement {
 }
 
 impl RenderElement<GlesRenderer> for AnomalyWindowElement {
+    fn draw(
+        &self,
+        frame: &mut GlesFrame<'_, '_>,
+        src: Rectangle<f64, smithay::utils::Buffer>,
+        dst: Rectangle<i32, Physical>,
+        damage: &[Rectangle<i32, Physical>],
+        opaque_regions: &[Rectangle<i32, Physical>],
+        user_data: Option<&smithay::utils::user_data::UserDataMap>,
+    ) -> Result<(), GlesError> {
+        frame.override_default_tex_program(self.shader.clone(), self.compute_uniforms());
+        let result = <TextureRenderElement<GlesTexture> as RenderElement<GlesRenderer>>::draw(
+            &self.inner,
+            frame,
+            src,
+            dst,
+            damage,
+            opaque_regions,
+            user_data,
+        );
+        frame.clear_tex_program_override();
+        result
+    }
+
+    fn underlying_storage(&self, renderer: &mut GlesRenderer) -> Option<UnderlyingStorage<'_>> {
+        self.inner.underlying_storage(renderer)
+    }
+}
+
+
+#[derive(Debug)]
+pub struct CustomWindowElement {
+    inner: TextureRenderElement<GlesTexture>,
+    shader: GlesTexProgram,
+    progress: f32,
+    for_opening: bool,
+    duration: f32,
+    size: (f32, f32),
+    time: f32,
+    seed: (f32, f32),
+}
+
+impl CustomWindowElement {
+    #[allow(clippy::too_many_arguments)]
+    pub fn new(
+        inner: TextureRenderElement<GlesTexture>,
+        shader: GlesTexProgram,
+        progress: f32,
+        for_opening: bool,
+        duration: f32,
+        size: (f32, f32),
+        time: f32,
+        seed: (f32, f32),
+    ) -> Self {
+        Self {
+            inner,
+            shader,
+            progress,
+            for_opening,
+            duration,
+            size,
+            time,
+            seed,
+        }
+    }
+
+    fn compute_uniforms(&self) -> Vec<Uniform<'static>> {
+        vec![
+            Uniform::new("u_progress", self.progress),
+            Uniform::new("u_for_opening", if self.for_opening { 1.0f32 } else { 0.0f32 }),
+            Uniform::new("u_duration", self.duration),
+            Uniform::new("u_size", self.size),
+            Uniform::new("u_time", self.time),
+            Uniform::new("u_seed", self.seed),
+            Uniform::new("u_color", (1.0f32, 1.0f32, 1.0f32, 1.0f32)),
+            Uniform::new("u_scale", 1.0f32),
+            Uniform::new("u_movement_speed", 1.0f32),
+            Uniform::new("u_gradient1", (0.298f32, 0.200f32, 0.098f32, 0.0f32)),
+            Uniform::new("u_gradient2", (0.706f32, 0.216f32, 0.118f32, 0.7f32)),
+            Uniform::new("u_gradient3", (1.0f32, 0.298f32, 0.149f32, 0.9f32)),
+            Uniform::new("u_gradient4", (1.0f32, 0.651f32, 0.098f32, 1.0f32)),
+            Uniform::new("u_gradient5", (1.0f32, 1.0f32, 1.0f32, 1.0f32)),
+            Uniform::new("u_horizontal_scale", 2.0f32),
+            Uniform::new("u_vertical_scale", 3.0f32),
+            Uniform::new("u_pixel_size", 4.0f32),
+            Uniform::new("u_closing_bottom_to_top", 0.0f32),
+            Uniform::new("u_rotation_speed", 0.3f32),
+            Uniform::new("u_whirling", 1.0f32),
+            Uniform::new("u_details", 15.0f32),
+        ]
+    }
+}
+
+impl Element for CustomWindowElement {
+    fn id(&self) -> &Id {
+        self.inner.id()
+    }
+
+    fn current_commit(&self) -> CommitCounter {
+        self.inner.current_commit()
+    }
+
+    fn src(&self) -> Rectangle<f64, smithay::utils::Buffer> {
+        self.inner.src()
+    }
+
+    fn transform(&self) -> Transform {
+        self.inner.transform()
+    }
+
+    fn geometry(&self, scale: Scale<f64>) -> Rectangle<i32, Physical> {
+        self.inner.geometry(scale)
+    }
+
+    fn damage_since(
+        &self,
+        scale: Scale<f64>,
+        commit: Option<CommitCounter>,
+    ) -> DamageSet<i32, Physical> {
+        self.inner.damage_since(scale, commit)
+    }
+
+    fn opaque_regions(&self, _scale: Scale<f64>) -> OpaqueRegions<i32, Physical> {
+        OpaqueRegions::default()
+    }
+
+    fn alpha(&self) -> f32 {
+        self.inner.alpha()
+    }
+
+    fn kind(&self) -> Kind {
+        self.inner.kind()
+    }
+}
+
+impl RenderElement<GlesRenderer> for CustomWindowElement {
     fn draw(
         &self,
         frame: &mut GlesFrame<'_, '_>,

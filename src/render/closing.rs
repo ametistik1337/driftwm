@@ -24,7 +24,7 @@ use driftwm::config::WindowEffect;
 use crate::state::SuspendedWindow;
 
 use super::{
-    AnomalyWindowElement, DoomWindowElement, FireWindowElement, OutputRenderElements,
+    AnomalyWindowElement, CustomWindowElement, DoomWindowElement, FireWindowElement, OutputRenderElements,
     PortalWindowElement, TrimmedElement, TvWindowElement, WindowRenderAnimation,
     WindowTransformElement, painted_rect, shaders,
 };
@@ -428,7 +428,7 @@ pub(crate) struct ClosingSnapshot {
     /// Shrink amplitude for a normal close (`effects.animation_scale`).
     scale_amplitude: f64,
     progress: f64,
-    effect: WindowEffect,
+    pub(crate) effect: WindowEffect,
     started_at: Instant,
     duration: Duration,
     seed: (f32, f32),
@@ -740,13 +740,17 @@ fn flatten(
     Some((buffer, bounds, phys_size))
 }
 
-fn effect_duration(effect: WindowEffect) -> Duration {
+fn effect_duration(effect: &WindowEffect, custom_ms: Option<u64>) -> Duration {
+    if let Some(ms) = custom_ms {
+        return Duration::from_millis(ms);
+    }
     match effect {
         WindowEffect::Portal => Duration::from_millis(1250),
         WindowEffect::Fire => Duration::from_millis(1200),
         WindowEffect::Tv => Duration::from_millis(400),
         WindowEffect::Doom => Duration::from_millis(700),
         WindowEffect::Anomaly => Duration::from_millis(750),
+        WindowEffect::Custom(_) => Duration::from_millis(750),
         WindowEffect::Default => Duration::from_millis(300),
     }
 }
@@ -762,9 +766,11 @@ pub(crate) fn snapshot_canvas(
     alpha_only: bool,
     chrome: Option<&CloseChrome<'_>>,
     effect: WindowEffect,
+    custom_duration_ms: Option<u64>,
 ) -> Option<ClosingSnapshot> {
     let (buffer, bounds, texels) = flatten(renderer, pixels, flatten_scale.max(1.0), chrome)?;
     let canvas_rect = Rectangle::new(window_origin + bounds.loc, bounds.size);
+    let duration = effect_duration(&effect, custom_duration_ms);
     Some(ClosingSnapshot {
         buffer,
         texels,
@@ -775,7 +781,7 @@ pub(crate) fn snapshot_canvas(
         progress: 0.0,
         effect,
         started_at: Instant::now(),
-        duration: effect_duration(effect),
+        duration,
         seed: random_portal_seed(),
     })
 }
@@ -793,6 +799,7 @@ pub(crate) fn snapshot_screen(
     alpha_only: bool,
     chrome: Option<&CloseChrome<'_>>,
     effect: WindowEffect,
+    custom_duration_ms: Option<u64>,
 ) -> Option<ClosingSnapshot> {
     let (buffer, bounds, texels) = flatten(renderer, pixels, flatten_scale.max(1.0), chrome)?;
     let loc = Point::from((
@@ -800,6 +807,7 @@ pub(crate) fn snapshot_screen(
         screen_origin.y + bounds.loc.y.round() as i32,
     ));
     let screen_rect = Rectangle::new(loc, bounds.size.to_i32_round());
+    let duration = effect_duration(&effect, custom_duration_ms);
     Some(ClosingSnapshot {
         buffer,
         texels,
@@ -810,18 +818,22 @@ pub(crate) fn snapshot_screen(
         progress: 0.0,
         effect,
         started_at: Instant::now(),
-        duration: effect_duration(effect),
+        duration,
         seed: random_portal_seed(),
     })
 }
 
-#[derive(Clone, Copy, Default, Debug)]
+#[derive(Clone, Copy, Debug)]
 pub struct WindowEffectShaders<'a> {
     pub portal: Option<&'a GlesTexProgram>,
     pub fire: Option<&'a GlesTexProgram>,
     pub tv: Option<&'a GlesTexProgram>,
     pub doom: Option<&'a GlesTexProgram>,
     pub anomaly: Option<&'a GlesTexProgram>,
+    pub custom_shaders:
+        &'a HashMap<std::path::PathBuf, (GlesTexProgram, Option<std::time::SystemTime>)>,
+    pub preset_overrides:
+        &'a HashMap<String, (GlesTexProgram, Option<std::time::SystemTime>)>,
 }
 
 impl ClosingSnapshot {
@@ -863,158 +875,330 @@ impl ClosingSnapshot {
             loc_phys.y + size_phys.h / 2.0,
         ));
 
-        if self.effect == WindowEffect::Portal {
-            if let Some(shader) = shaders.portal {
-                let texture = TextureRenderElement::from_texture_buffer(
-                    loc_phys,
-                    &self.buffer,
-                    Some(1.0),
-                    Some(super::texel_src(self.texels)),
-                    Some(screen_size.to_i32_round()),
-                    Kind::Unspecified,
-                );
-                let portal = PortalWindowElement::new(
-                    texture,
-                    shader.clone(),
-                    self.progress as f32,
-                    false,
-                    self.duration.as_secs_f32(),
-                    (size_phys.w as f32, size_phys.h as f32),
-                    (0.4745, 0.9137, 0.0941),
-                    self.seed,
-                    0.3,
-                    1.0,
-                    15.0,
-                );
-                return Some(OutputRenderElements::PortalClosingWindow(
-                    WindowTransformElement::new(
-                        portal,
-                        center,
-                        Point::default(),
-                        Scale::from(1.0),
-                    ),
-                ));
+        match &self.effect {
+            WindowEffect::Custom(path) => {
+                if let Some((shader, _)) = shaders.custom_shaders.get(path) {
+                    let texture = TextureRenderElement::from_texture_buffer(
+                        loc_phys,
+                        &self.buffer,
+                        Some(1.0),
+                        Some(super::texel_src(self.texels)),
+                        Some(screen_size.to_i32_round()),
+                        Kind::Unspecified,
+                    );
+                    let custom = CustomWindowElement::new(
+                        texture,
+                        shader.clone(),
+                        self.progress as f32,
+                        false,
+                        self.duration.as_secs_f32(),
+                        (size_phys.w as f32, size_phys.h as f32),
+                        self.started_at.elapsed().as_secs_f32(),
+                        self.seed,
+                    );
+                    return Some(OutputRenderElements::CustomClosingWindow(
+                        WindowTransformElement::new(
+                            custom,
+                            center,
+                            Point::default(),
+                            Scale::from(1.0),
+                        ),
+                    ));
+                }
             }
-        } else if self.effect == WindowEffect::Fire {
-            if let Some(shader) = shaders.fire {
-                let texture = TextureRenderElement::from_texture_buffer(
-                    loc_phys,
-                    &self.buffer,
-                    Some(1.0),
-                    Some(super::texel_src(self.texels)),
-                    Some(screen_size.to_i32_round()),
-                    Kind::Unspecified,
-                );
-                let fire = FireWindowElement::new(
-                    texture,
-                    shader.clone(),
-                    self.progress as f32,
-                    false,
-                    self.duration.as_secs_f32(),
-                    (size_phys.w as f32, size_phys.h as f32),
-                    1.0,
-                    0.5,
-                    (0.298, 0.200, 0.098, 0.0),
-                    (0.706, 0.216, 0.118, 0.7),
-                    (1.0, 0.298, 0.149, 0.9),
-                    (1.0, 0.651, 0.098, 1.0),
-                    (1.0, 1.0, 1.0, 1.0),
-                    false,
-                );
-                return Some(OutputRenderElements::FireClosingWindow(
-                    WindowTransformElement::new(
-                        fire,
-                        center,
-                        Point::default(),
-                        Scale::from(1.0),
-                    ),
-                ));
+            WindowEffect::Portal => {
+                if let Some((shader, _)) = shaders.preset_overrides.get("portal") {
+                    let texture = TextureRenderElement::from_texture_buffer(
+                        loc_phys,
+                        &self.buffer,
+                        Some(1.0),
+                        Some(super::texel_src(self.texels)),
+                        Some(screen_size.to_i32_round()),
+                        Kind::Unspecified,
+                    );
+                    let custom = CustomWindowElement::new(
+                        texture,
+                        shader.clone(),
+                        self.progress as f32,
+                        false,
+                        self.duration.as_secs_f32(),
+                        (size_phys.w as f32, size_phys.h as f32),
+                        self.started_at.elapsed().as_secs_f32(),
+                        self.seed,
+                    );
+                    return Some(OutputRenderElements::CustomClosingWindow(
+                        WindowTransformElement::new(
+                            custom,
+                            center,
+                            Point::default(),
+                            Scale::from(1.0),
+                        ),
+                    ));
+                } else if let Some(shader) = shaders.portal {
+                    let texture = TextureRenderElement::from_texture_buffer(
+                        loc_phys,
+                        &self.buffer,
+                        Some(1.0),
+                        Some(super::texel_src(self.texels)),
+                        Some(screen_size.to_i32_round()),
+                        Kind::Unspecified,
+                    );
+                    let portal = PortalWindowElement::new(
+                        texture,
+                        shader.clone(),
+                        self.progress as f32,
+                        false,
+                        self.duration.as_secs_f32(),
+                        (size_phys.w as f32, size_phys.h as f32),
+                        (0.4745, 0.9137, 0.0941),
+                        self.seed,
+                        0.3,
+                        1.0,
+                        15.0,
+                    );
+                    return Some(OutputRenderElements::PortalClosingWindow(
+                        WindowTransformElement::new(
+                            portal,
+                            center,
+                            Point::default(),
+                            Scale::from(1.0),
+                        ),
+                    ));
+                }
             }
-        } else if self.effect == WindowEffect::Tv {
-            if let Some(shader) = shaders.tv {
-                let texture = TextureRenderElement::from_texture_buffer(
-                    loc_phys,
-                    &self.buffer,
-                    Some(1.0),
-                    Some(super::texel_src(self.texels)),
-                    Some(screen_size.to_i32_round()),
-                    Kind::Unspecified,
-                );
-                let tv = TvWindowElement::new(
-                    texture,
-                    shader.clone(),
-                    self.progress as f32,
-                    false,
-                    self.duration.as_secs_f32(),
-                    (size_phys.w as f32, size_phys.h as f32),
-                    (1.0, 1.0, 1.0, 1.0),
-                );
-                return Some(OutputRenderElements::TvClosingWindow(
-                    WindowTransformElement::new(
-                        tv,
-                        center,
-                        Point::default(),
-                        Scale::from(1.0),
-                    ),
-                ));
+            WindowEffect::Fire => {
+                if let Some((shader, _)) = shaders.preset_overrides.get("fire") {
+                    let texture = TextureRenderElement::from_texture_buffer(
+                        loc_phys,
+                        &self.buffer,
+                        Some(1.0),
+                        Some(super::texel_src(self.texels)),
+                        Some(screen_size.to_i32_round()),
+                        Kind::Unspecified,
+                    );
+                    let custom = CustomWindowElement::new(
+                        texture,
+                        shader.clone(),
+                        self.progress as f32,
+                        false,
+                        self.duration.as_secs_f32(),
+                        (size_phys.w as f32, size_phys.h as f32),
+                        self.started_at.elapsed().as_secs_f32(),
+                        self.seed,
+                    );
+                    return Some(OutputRenderElements::CustomClosingWindow(
+                        WindowTransformElement::new(
+                            custom,
+                            center,
+                            Point::default(),
+                            Scale::from(1.0),
+                        ),
+                    ));
+                } else if let Some(shader) = shaders.fire {
+                    let texture = TextureRenderElement::from_texture_buffer(
+                        loc_phys,
+                        &self.buffer,
+                        Some(1.0),
+                        Some(super::texel_src(self.texels)),
+                        Some(screen_size.to_i32_round()),
+                        Kind::Unspecified,
+                    );
+                    let fire = FireWindowElement::new(
+                        texture,
+                        shader.clone(),
+                        self.progress as f32,
+                        false,
+                        self.duration.as_secs_f32(),
+                        (size_phys.w as f32, size_phys.h as f32),
+                        1.0,
+                        0.5,
+                        (0.298, 0.200, 0.098, 0.0),
+                        (0.706, 0.216, 0.118, 0.7),
+                        (1.0, 0.298, 0.149, 0.9),
+                        (1.0, 0.651, 0.098, 1.0),
+                        (1.0, 1.0, 1.0, 1.0),
+                        false,
+                    );
+                    return Some(OutputRenderElements::FireClosingWindow(
+                        WindowTransformElement::new(
+                            fire,
+                            center,
+                            Point::default(),
+                            Scale::from(1.0),
+                        ),
+                    ));
+                }
             }
-        } else if self.effect == WindowEffect::Doom {
-            if let Some(shader) = shaders.doom {
-                let texture = TextureRenderElement::from_texture_buffer(
-                    loc_phys,
-                    &self.buffer,
-                    Some(1.0),
-                    Some(super::texel_src(self.texels)),
-                    Some(screen_size.to_i32_round()),
-                    Kind::Unspecified,
-                );
-                let doom = DoomWindowElement::new(
-                    texture,
-                    shader.clone(),
-                    self.progress as f32,
-                    false,
-                    self.duration.as_secs_f32(),
-                    (size_phys.w as f32, size_phys.h as f32),
-                    2.0,
-                    3.0,
-                    4.0,
-                );
-                return Some(OutputRenderElements::DoomClosingWindow(
-                    WindowTransformElement::new(
-                        doom,
-                        center,
-                        Point::default(),
-                        Scale::from(1.0),
-                    ),
-                ));
+            WindowEffect::Tv => {
+                if let Some((shader, _)) = shaders.preset_overrides.get("tv") {
+                    let texture = TextureRenderElement::from_texture_buffer(
+                        loc_phys,
+                        &self.buffer,
+                        Some(1.0),
+                        Some(super::texel_src(self.texels)),
+                        Some(screen_size.to_i32_round()),
+                        Kind::Unspecified,
+                    );
+                    let custom = CustomWindowElement::new(
+                        texture,
+                        shader.clone(),
+                        self.progress as f32,
+                        false,
+                        self.duration.as_secs_f32(),
+                        (size_phys.w as f32, size_phys.h as f32),
+                        self.started_at.elapsed().as_secs_f32(),
+                        self.seed,
+                    );
+                    return Some(OutputRenderElements::CustomClosingWindow(
+                        WindowTransformElement::new(
+                            custom,
+                            center,
+                            Point::default(),
+                            Scale::from(1.0),
+                        ),
+                    ));
+                } else if let Some(shader) = shaders.tv {
+                    let texture = TextureRenderElement::from_texture_buffer(
+                        loc_phys,
+                        &self.buffer,
+                        Some(1.0),
+                        Some(super::texel_src(self.texels)),
+                        Some(screen_size.to_i32_round()),
+                        Kind::Unspecified,
+                    );
+                    let tv = TvWindowElement::new(
+                        texture,
+                        shader.clone(),
+                        self.progress as f32,
+                        false,
+                        self.duration.as_secs_f32(),
+                        (size_phys.w as f32, size_phys.h as f32),
+                        (1.0, 1.0, 1.0, 1.0),
+                    );
+                    return Some(OutputRenderElements::TvClosingWindow(
+                        WindowTransformElement::new(
+                            tv,
+                            center,
+                            Point::default(),
+                            Scale::from(1.0),
+                        ),
+                    ));
+                }
             }
-        } else if self.effect == WindowEffect::Anomaly {
-            if let Some(shader) = shaders.anomaly {
-                let texture = TextureRenderElement::from_texture_buffer(
-                    loc_phys,
-                    &self.buffer,
-                    Some(1.0),
-                    Some(super::texel_src(self.texels)),
-                    Some(screen_size.to_i32_round()),
-                    Kind::Unspecified,
-                );
-                let anomaly = AnomalyWindowElement::new(
-                    texture,
-                    shader.clone(),
-                    self.progress as f32,
-                    false,
-                    self.duration.as_secs_f32(),
-                    (size_phys.w as f32, size_phys.h as f32),
-                );
-                return Some(OutputRenderElements::AnomalyClosingWindow(
-                    WindowTransformElement::new(
-                        anomaly,
-                        center,
-                        Point::default(),
-                        Scale::from(1.0),
-                    ),
-                ));
+            WindowEffect::Doom => {
+                if let Some((shader, _)) = shaders.preset_overrides.get("doom") {
+                    let texture = TextureRenderElement::from_texture_buffer(
+                        loc_phys,
+                        &self.buffer,
+                        Some(1.0),
+                        Some(super::texel_src(self.texels)),
+                        Some(screen_size.to_i32_round()),
+                        Kind::Unspecified,
+                    );
+                    let custom = CustomWindowElement::new(
+                        texture,
+                        shader.clone(),
+                        self.progress as f32,
+                        false,
+                        self.duration.as_secs_f32(),
+                        (size_phys.w as f32, size_phys.h as f32),
+                        self.started_at.elapsed().as_secs_f32(),
+                        self.seed,
+                    );
+                    return Some(OutputRenderElements::CustomClosingWindow(
+                        WindowTransformElement::new(
+                            custom,
+                            center,
+                            Point::default(),
+                            Scale::from(1.0),
+                        ),
+                    ));
+                } else if let Some(shader) = shaders.doom {
+                    let texture = TextureRenderElement::from_texture_buffer(
+                        loc_phys,
+                        &self.buffer,
+                        Some(1.0),
+                        Some(super::texel_src(self.texels)),
+                        Some(screen_size.to_i32_round()),
+                        Kind::Unspecified,
+                    );
+                    let doom = DoomWindowElement::new(
+                        texture,
+                        shader.clone(),
+                        self.progress as f32,
+                        false,
+                        self.duration.as_secs_f32(),
+                        (size_phys.w as f32, size_phys.h as f32),
+                        2.0,
+                        3.0,
+                        4.0,
+                    );
+                    return Some(OutputRenderElements::DoomClosingWindow(
+                        WindowTransformElement::new(
+                            doom,
+                            center,
+                            Point::default(),
+                            Scale::from(1.0),
+                        ),
+                    ));
+                }
             }
+            WindowEffect::Anomaly => {
+                if let Some((shader, _)) = shaders.preset_overrides.get("anomaly") {
+                    let texture = TextureRenderElement::from_texture_buffer(
+                        loc_phys,
+                        &self.buffer,
+                        Some(1.0),
+                        Some(super::texel_src(self.texels)),
+                        Some(screen_size.to_i32_round()),
+                        Kind::Unspecified,
+                    );
+                    let custom = CustomWindowElement::new(
+                        texture,
+                        shader.clone(),
+                        self.progress as f32,
+                        false,
+                        self.duration.as_secs_f32(),
+                        (size_phys.w as f32, size_phys.h as f32),
+                        self.started_at.elapsed().as_secs_f32(),
+                        self.seed,
+                    );
+                    return Some(OutputRenderElements::CustomClosingWindow(
+                        WindowTransformElement::new(
+                            custom,
+                            center,
+                            Point::default(),
+                            Scale::from(1.0),
+                        ),
+                    ));
+                } else if let Some(shader) = shaders.anomaly {
+                    let texture = TextureRenderElement::from_texture_buffer(
+                        loc_phys,
+                        &self.buffer,
+                        Some(1.0),
+                        Some(super::texel_src(self.texels)),
+                        Some(screen_size.to_i32_round()),
+                        Kind::Unspecified,
+                    );
+                    let anomaly = AnomalyWindowElement::new(
+                        texture,
+                        shader.clone(),
+                        self.progress as f32,
+                        false,
+                        self.duration.as_secs_f32(),
+                        (size_phys.w as f32, size_phys.h as f32),
+                    );
+                    return Some(OutputRenderElements::AnomalyClosingWindow(
+                        WindowTransformElement::new(
+                            anomaly,
+                            center,
+                            Point::default(),
+                            Scale::from(1.0),
+                        ),
+                    ));
+                }
+            }
+            WindowEffect::Default => {}
         }
 
         let alpha = fade_out_alpha(self.progress);

@@ -2,6 +2,7 @@ mod defaults;
 
 mod parse;
 mod parse_helpers;
+pub mod shader_catalog;
 mod toml;
 mod types;
 
@@ -9,6 +10,9 @@ pub use parse::{
     ACTION_NAMES, parse_action, parse_direction, parse_gesture_binding, parse_gesture_config_entry,
     parse_gesture_trigger, parse_key_combo, parse_mouse_action, parse_mouse_binding,
     parse_tap_combo, parse_touch_config_entry, parse_touch_trigger,
+};
+pub use shader_catalog::{
+    ensure_default_shaders_exported, preset_disk_override, resolve_shader_path, shaders_dir,
 };
 pub use toml::config_path;
 pub use types::*;

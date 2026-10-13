@@ -703,7 +703,7 @@ pub(super) fn compile_textured_bg_shader(
         .map_err(|e| format!("compile error: {e}"))
 }
 
-const WINDOW_PORTAL_SRC: &str = include_str!("../shaders/window_portal.glsl");
+pub const WINDOW_PORTAL_SRC: &str = include_str!("../shaders/window_portal.glsl");
 
 pub const WINDOW_PORTAL_UNIFORMS: &[UniformName<'static>] = &[
     UniformName {
@@ -754,7 +754,7 @@ pub fn compile_portal_shader(renderer: &mut GlesRenderer) -> Option<GlesTexProgr
     }
 }
 
-const WINDOW_FIRE_SRC: &str = include_str!("../shaders/window_fire.glsl");
+pub const WINDOW_FIRE_SRC: &str = include_str!("../shaders/window_fire.glsl");
 
 pub const WINDOW_FIRE_UNIFORMS: &[UniformName<'static>] = &[
     UniformName {
@@ -817,7 +817,7 @@ pub fn compile_fire_shader(renderer: &mut GlesRenderer) -> Option<GlesTexProgram
     }
 }
 
-const WINDOW_TV_SRC: &str = include_str!("../shaders/window_tv.glsl");
+pub const WINDOW_TV_SRC: &str = include_str!("../shaders/window_tv.glsl");
 
 pub const WINDOW_TV_UNIFORMS: &[UniformName<'static>] = &[
     UniformName {
@@ -852,7 +852,7 @@ pub fn compile_tv_shader(renderer: &mut GlesRenderer) -> Option<GlesTexProgram> 
     }
 }
 
-const WINDOW_DOOM_SRC: &str = include_str!("../shaders/window_doom.glsl");
+pub const WINDOW_DOOM_SRC: &str = include_str!("../shaders/window_doom.glsl");
 
 pub const WINDOW_DOOM_UNIFORMS: &[UniformName<'static>] = &[
     UniformName {
@@ -895,7 +895,7 @@ pub fn compile_doom_shader(renderer: &mut GlesRenderer) -> Option<GlesTexProgram
     }
 }
 
-const WINDOW_ANOMALY_SRC: &str = include_str!("../shaders/window_anomaly.glsl");
+pub const WINDOW_ANOMALY_SRC: &str = include_str!("../shaders/window_anomaly.glsl");
 
 pub const WINDOW_ANOMALY_UNIFORMS: &[UniformName<'static>] = &[
     UniformName {
@@ -924,6 +924,113 @@ pub fn compile_anomaly_shader(renderer: &mut GlesRenderer) -> Option<GlesTexProg
             None
         }
     }
+}
+
+pub const CUSTOM_SHADER_PREAMBLE: &str = "//_DEFINES_\n\n#if defined(EXTERNAL)\n#extension GL_OES_EGL_image_external : require\n#endif\n\nprecision highp float;\n\n#if defined(EXTERNAL)\nuniform samplerExternalOES tex;\n#else\nuniform sampler2D tex;\n#endif\n\nuniform float alpha;\nvarying vec2 v_coords;\n";
+
+pub fn preprocess_custom_window_shader(src: &str) -> String {
+    if src.contains("//_DEFINES_") {
+        src.to_string()
+    } else {
+        format!("{CUSTOM_SHADER_PREAMBLE}\n{src}")
+    }
+}
+
+pub const WINDOW_CUSTOM_UNIFORMS: &[UniformName<'static>] = &[
+    UniformName {
+        name: Cow::Borrowed("u_progress"),
+        type_: UniformType::_1f,
+    },
+    UniformName {
+        name: Cow::Borrowed("u_for_opening"),
+        type_: UniformType::_1f,
+    },
+    UniformName {
+        name: Cow::Borrowed("u_duration"),
+        type_: UniformType::_1f,
+    },
+    UniformName {
+        name: Cow::Borrowed("u_size"),
+        type_: UniformType::_2f,
+    },
+    UniformName {
+        name: Cow::Borrowed("u_time"),
+        type_: UniformType::_1f,
+    },
+    UniformName {
+        name: Cow::Borrowed("u_seed"),
+        type_: UniformType::_2f,
+    },
+    UniformName {
+        name: Cow::Borrowed("u_color"),
+        type_: UniformType::_4f,
+    },
+    UniformName {
+        name: Cow::Borrowed("u_scale"),
+        type_: UniformType::_1f,
+    },
+    UniformName {
+        name: Cow::Borrowed("u_movement_speed"),
+        type_: UniformType::_1f,
+    },
+    UniformName {
+        name: Cow::Borrowed("u_gradient1"),
+        type_: UniformType::_4f,
+    },
+    UniformName {
+        name: Cow::Borrowed("u_gradient2"),
+        type_: UniformType::_4f,
+    },
+    UniformName {
+        name: Cow::Borrowed("u_gradient3"),
+        type_: UniformType::_4f,
+    },
+    UniformName {
+        name: Cow::Borrowed("u_gradient4"),
+        type_: UniformType::_4f,
+    },
+    UniformName {
+        name: Cow::Borrowed("u_gradient5"),
+        type_: UniformType::_4f,
+    },
+    UniformName {
+        name: Cow::Borrowed("u_horizontal_scale"),
+        type_: UniformType::_1f,
+    },
+    UniformName {
+        name: Cow::Borrowed("u_vertical_scale"),
+        type_: UniformType::_1f,
+    },
+    UniformName {
+        name: Cow::Borrowed("u_pixel_size"),
+        type_: UniformType::_1f,
+    },
+    UniformName {
+        name: Cow::Borrowed("u_closing_bottom_to_top"),
+        type_: UniformType::_1f,
+    },
+    UniformName {
+        name: Cow::Borrowed("u_rotation_speed"),
+        type_: UniformType::_1f,
+    },
+    UniformName {
+        name: Cow::Borrowed("u_whirling"),
+        type_: UniformType::_1f,
+    },
+    UniformName {
+        name: Cow::Borrowed("u_details"),
+        type_: UniformType::_1f,
+    },
+];
+
+pub fn compile_custom_window_shader(
+    renderer: &mut GlesRenderer,
+    src: &str,
+) -> Result<GlesTexProgram, String> {
+    let preprocessed = preprocess_custom_window_shader(src);
+    renderer
+        .compile_custom_texture_shader(&preprocessed, WINDOW_CUSTOM_UNIFORMS)
+        .map_err(|e| format!("GLSL compile error: {e}"))
 }
 
 

@@ -1036,7 +1036,7 @@ pub struct BackendConfig {
     pub max_capture_fps: u32,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Default, serde::Serialize, serde::Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Default, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum WindowEffect {
     #[default]
@@ -1046,6 +1046,8 @@ pub enum WindowEffect {
     Tv,
     Doom,
     Anomaly,
+    #[serde(untagged)]
+    Custom(std::path::PathBuf),
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -1065,6 +1067,8 @@ pub struct EffectsConfig {
     pub animation_scale: f64,
     /// Window open/close shader animation effect
     pub window_effect: WindowEffect,
+    /// Optional duration override for the window effect animation in milliseconds
+    pub window_effect_duration_ms: Option<u64>,
 }
 
 impl Default for EffectsConfig {
@@ -1076,6 +1080,7 @@ impl Default for EffectsConfig {
             animation_speed: 0.5,
             animation_scale: 0.95,
             window_effect: WindowEffect::Default,
+            window_effect_duration_ms: None,
         }
     }
 }

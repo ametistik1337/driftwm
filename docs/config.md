@@ -670,7 +670,9 @@ open/close grow/shrink amplitude (1 = fade only)
 
 Default: `"default"`
 
-window open/close effect: "default" (scale + fade), "portal" (Rick & Morty C-137 portal), "fire" (Compiz Fire), "tv" (Retro CRT), "doom" (Doom Melt), "anomaly" (S.T.A.L.K.E.R. 2 Anomaly)
+window open/close effect: "default" (scale + fade), "portal" (Rick & Morty C-137 portal), "fire" (Compiz Fire), "tv" (Retro CRT), "doom" (Doom Melt), "anomaly" (S.T.A.L.K.E.R. 2 Anomaly), or custom GLSL shader path/name from ~/.config/driftwm/shaders/
+
+window_effect_duration_ms = 750 # optional animation duration override in milliseconds
 
 ## `[background]`
 

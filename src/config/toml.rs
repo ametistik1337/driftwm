@@ -60,6 +60,7 @@ pub(super) struct EffectsFileConfig {
     pub animation_speed: Option<f64>,
     pub animation_scale: Option<f64>,
     pub window_effect: Option<String>,
+    pub window_effect_duration_ms: Option<u64>,
 }
 
 #[derive(Serialize, Deserialize, Default)]

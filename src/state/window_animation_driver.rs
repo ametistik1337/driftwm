@@ -1308,7 +1308,8 @@ impl DriftWm {
             })
         };
         let chrome = chrome.as_ref();
-        let effect = self.config.effects.window_effect;
+        let effect = self.config.effects.window_effect.clone();
+        let custom_ms = self.config.effects.window_effect_duration_ms;
         let snapshot = if let Some(output) = fullscreen_output {
             let flatten_scale = output.current_scale().fractional_scale();
             crate::render::snapshot_screen(
@@ -1324,6 +1325,7 @@ impl DriftWm {
                 alpha_only,
                 chrome,
                 effect,
+                custom_ms,
             )
         } else if let Some(site) = self.stage.pin_of(window).cloned() {
             let flatten_scale = self
@@ -1344,6 +1346,7 @@ impl DriftWm {
                 alpha_only,
                 chrome,
                 effect,
+                custom_ms,
             )
         } else {
             let stage_pos = self.stage.position_of(window).unwrap_or_default();
@@ -1362,6 +1365,7 @@ impl DriftWm {
                 alpha_only,
                 chrome,
                 effect,
+                custom_ms,
             )
         };
         self.backend = Some(backend);

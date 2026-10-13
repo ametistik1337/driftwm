@@ -9,9 +9,9 @@ use smithay::utils::{Physical, Point, Scale, Size, Transform};
 
 use super::gl;
 use crate::render::{
-    AnomalyWindowElement, DoomWindowElement, FireWindowElement, OutputRenderElements,
-    TvWindowElement, WindowTransformElement, compile_anomaly_shader, compile_doom_shader,
-    compile_fire_shader, compile_tv_shader, render_elements_to_rgba,
+    AnomalyWindowElement, CustomWindowElement, DoomWindowElement, FireWindowElement, OutputRenderElements,
+    TvWindowElement, WindowTransformElement, compile_anomaly_shader, compile_custom_window_shader,
+    compile_doom_shader, compile_fire_shader, compile_tv_shader, render_elements_to_rgba,
 };
 
 #[test]
@@ -308,4 +308,128 @@ fn anomaly_shader_renders_accurately() {
         .expect("valid rgba image");
     let out_path = "/tmp/anomaly_driftwm_test.png";
     img.save(out_path).expect("save rendered anomaly image");
+}
+
+#[test]
+#[ignore = "needs Mesa surfaceless EGL; run with --include-ignored"]
+fn custom_shader_renders_and_hot_reloads() {
+    let _gl = gl::lock();
+    let Some(mut renderer) = gl::surfaceless_renderer("custom_shader_renders_and_hot_reloads") else {
+        return;
+    };
+
+    // 1. Test auto-preamble injection: user shader code with NO //_DEFINES_
+    let custom_glsl_v1 = r#"
+        uniform float u_progress;
+        uniform vec2 u_size;
+
+        void main() {
+            vec4 col = texture2D(tex, v_coords);
+            gl_FragColor = vec4(col.r * (1.0 - u_progress), col.g, col.b, col.a);
+        }
+    "#;
+
+    let shader = compile_custom_window_shader(&mut renderer, custom_glsl_v1)
+        .expect("compile custom window shader with auto-preamble");
+
+    let width = 100;
+    let height = 100;
+    let phys_size = Size::<i32, Physical>::from((width, height));
+    let buffer_size = smithay::utils::Size::from((width, height));
+
+    let texture = Offscreen::<GlesTexture>::create_buffer(
+        &mut renderer,
+        Fourcc::Abgr8888,
+        buffer_size,
+    )
+    .expect("create offscreen texture");
+
+    let tex_buf = TextureBuffer::from_texture(&mut renderer, texture, 1, Transform::Normal, None);
+    let elem = TextureRenderElement::from_texture_buffer(
+        Point::<f64, Physical>::from((0.0, 0.0)),
+        &tex_buf,
+        Some(1.0),
+        None,
+        Some(smithay::utils::Size::from((width, height))),
+        Kind::Unspecified,
+    );
+
+    let custom = CustomWindowElement::new(
+        elem,
+        shader,
+        0.5,
+        false,
+        1.0,
+        (width as f32, height as f32),
+        0.5,
+        (0.0, 0.0),
+    );
+
+    let center = Point::from((width as f64 / 2.0, height as f64 / 2.0));
+    let transform_elem = OutputRenderElements::CustomClosingWindow(
+        WindowTransformElement::new(
+            custom,
+            center,
+            Point::default(),
+            Scale::from(1.0),
+        ),
+    );
+
+    let refs = [&transform_elem];
+    let bytes = render_elements_to_rgba(
+        &mut renderer,
+        phys_size,
+        Scale::from(1.0),
+        &refs,
+    )
+    .expect("render custom elements to rgba");
+
+    assert_eq!(bytes.len(), (width * height * 4) as usize);
+
+    // 2. Test hot-reload caching in RenderCache with a temporary file
+    let temp_dir = std::env::temp_dir();
+    let shader_file = temp_dir.join("test_driftwm_hotreload.glsl");
+    std::fs::write(&shader_file, custom_glsl_v1).expect("write v1 shader");
+
+    let mut cache = crate::state::RenderCache::new();
+    let _prog1 = cache
+        .get_or_compile_custom_window_shader(&mut renderer, &shader_file)
+        .expect("compile v1 from file");
+
+    // Second call should reuse cached program
+    let _prog1_cached = cache
+        .get_or_compile_custom_window_shader(&mut renderer, &shader_file)
+        .expect("reuse v1 cached");
+
+    // Sleep briefly to ensure mtime advances
+    std::thread::sleep(std::time::Duration::from_millis(20));
+
+    // Update file with v2 shader (inverted red channel)
+    let custom_glsl_v2 = r#"
+        uniform float u_progress;
+        void main() {
+            vec4 col = texture2D(tex, v_coords);
+            gl_FragColor = vec4(1.0 - col.r, col.g, col.b, col.a);
+        }
+    "#;
+    std::fs::write(&shader_file, custom_glsl_v2).expect("write v2 shader");
+
+    let _prog2 = cache
+        .get_or_compile_custom_window_shader(&mut renderer, &shader_file)
+        .expect("recompile v2 on mtime advance");
+
+    let _ = std::fs::remove_file(&shader_file);
+}
+
+#[test]
+#[ignore = "needs Mesa surfaceless EGL; run with --include-ignored"]
+fn custom_shader_invalid_glsl_fails_safely() {
+    let _gl = gl::lock();
+    let Some(mut renderer) = gl::surfaceless_renderer("custom_shader_invalid_glsl_fails_safely") else {
+        return;
+    };
+
+    let invalid_glsl = "THIS_IS_DEFINITELY_NOT_VALID_GLSL_SYNTAX !!!";
+    let res = compile_custom_window_shader(&mut renderer, invalid_glsl);
+    assert!(res.is_err(), "Invalid GLSL must return Err rather than crashing");
 }

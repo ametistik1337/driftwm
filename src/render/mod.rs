@@ -28,7 +28,7 @@ pub(crate) use closing::{
 };
 pub use cursor::build_cursor_elements;
 pub use elements::{
-    AnomalyWindowElement, DoomWindowElement, FireWindowElement, OutputRenderElements,
+    AnomalyWindowElement, CustomWindowElement, DoomWindowElement, FireWindowElement, OutputRenderElements,
     PixelSnapRescaleElement, PortalWindowElement, RoundedCornerElement, TileShaderElement,
     TrimmedElement, TvWindowElement, WindowTransformElement, painted_rect, painted_size,
 };
@@ -41,7 +41,7 @@ pub use screenshot::capture_region_to_png;
 pub use shader_chunks::ShaderChunkCache;
 pub use shaders::{
     BorderPhysKey, ShadowPhysKey, compile_anomaly_shader, compile_border_shader,
-    compile_corner_clip_shader, compile_doom_shader, compile_fire_shader, compile_portal_shader,
+    compile_corner_clip_shader, compile_custom_window_shader, compile_doom_shader, compile_fire_shader, compile_portal_shader,
     compile_shadow_shader, compile_tv_shader,
 };
 pub use tile_chunks::BgChunkCache;
@@ -1630,6 +1630,30 @@ pub fn compose_frame(
     // Closing snapshots + adoption fades draw above normal windows, but never on
     // a visually-fullscreen output (no dying-window flash over a fullscreen app).
     if !output_fullscreen {
+        for snap in &state.closing_snapshots {
+            match &snap.effect {
+                driftwm::config::WindowEffect::Custom(path) => {
+                    state.render.get_or_compile_custom_window_shader(renderer, path.as_path());
+                }
+                driftwm::config::WindowEffect::Portal => {
+                    state.render.get_or_compile_preset_override(renderer, "portal");
+                }
+                driftwm::config::WindowEffect::Fire => {
+                    state.render.get_or_compile_preset_override(renderer, "fire");
+                }
+                driftwm::config::WindowEffect::Tv => {
+                    state.render.get_or_compile_preset_override(renderer, "tv");
+                }
+                driftwm::config::WindowEffect::Doom => {
+                    state.render.get_or_compile_preset_override(renderer, "doom");
+                }
+                driftwm::config::WindowEffect::Anomaly => {
+                    state.render.get_or_compile_preset_override(renderer, "anomaly");
+                }
+                driftwm::config::WindowEffect::Default => {}
+            }
+        }
+
         zoomed_closing = closing::render_snapshots_for_output(
             &state.closing_snapshots,
             &name,
@@ -1643,6 +1667,8 @@ pub fn compose_frame(
                 tv: state.render.tv_shader.as_ref(),
                 doom: state.render.doom_shader.as_ref(),
                 anomaly: state.render.anomaly_shader.as_ref(),
+                custom_shaders: &state.render.custom_window_shaders,
+                preset_overrides: &state.render.preset_shader_overrides,
             },
         );
         // Collected before the per-fade mutable borrows of `state` below.

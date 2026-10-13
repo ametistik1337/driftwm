@@ -312,6 +312,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         let config_dir = watch_path.parent().map(|p| p.to_owned());
         let config_name = watch_path.file_name().map(|n| n.to_owned());
 
+        driftwm::config::shader_catalog::ensure_default_shaders_exported();
+        let shaders_dir = driftwm::config::shader_catalog::shaders_dir();
+
         match (config_dir, Inotify::init()) {
             (Some(config_dir), Ok(mut inotify)) => {
                 if let Err(e) = inotify.watches().add(
@@ -319,7 +322,16 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     WatchMask::CLOSE_WRITE | WatchMask::MOVED_TO | WatchMask::CREATE,
                 ) {
                     tracing::warn!("Config hot-reload disabled: cannot watch {config_dir:?}: {e}");
-                } else {
+                }
+                if shaders_dir.is_dir() {
+                    if let Err(e) = inotify.watches().add(
+                        &shaders_dir,
+                        WatchMask::CLOSE_WRITE | WatchMask::MOVED_TO | WatchMask::CREATE,
+                    ) {
+                        tracing::warn!("Shaders hot-reload disabled: cannot watch {shaders_dir:?}: {e}");
+                    }
+                }
+                {
                     // calloop only hands the callback a shared ref to the Generic's
                     // payload, but read_events needs &mut. Poll a dup'd fd (same
                     // inotify description) and keep the instance in the closure,
@@ -331,22 +343,39 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                                 source,
                                 move |_, _, data: &mut DriftWm| {
                                     let mut buffer = [0u8; 1024];
-                                    let touched = match inotify.read_events(&mut buffer) {
-                                        Ok(events) => events
-                                            .filter_map(|e| e.name)
-                                            .any(|n| Some(n) == config_name.as_deref()),
-                                        Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => {
-                                            false
-                                        }
-                                        Err(e) => {
-                                            tracing::warn!("inotify read error: {e}");
-                                            false
-                                        }
-                                    };
+                                    let (config_touched, shader_touched) =
+                                        match inotify.read_events(&mut buffer) {
+                                            Ok(events) => {
+                                                let mut c_hit = false;
+                                                let mut s_hit = false;
+                                                for e in events {
+                                                    if let Some(n) = e.name {
+                                                        if Some(n) == config_name.as_deref() {
+                                                            c_hit = true;
+                                                        } else if n
+                                                            .to_string_lossy()
+                                                            .ends_with(".glsl")
+                                                        {
+                                                            s_hit = true;
+                                                        }
+                                                    }
+                                                }
+                                                (c_hit, s_hit)
+                                            }
+                                            Err(e)
+                                                if e.kind() == std::io::ErrorKind::WouldBlock =>
+                                            {
+                                                (false, false)
+                                            }
+                                            Err(e) => {
+                                                tracing::warn!("inotify read error: {e}");
+                                                (false, false)
+                                            }
+                                        };
                                     // One save can emit several events (e.g. CREATE +
                                     // MOVED_TO on an atomic rename); reload only when
                                     // the file's mtime actually advances.
-                                    if touched {
+                                    if config_touched {
                                         let mtime = std::fs::metadata(&config_path)
                                             .and_then(|m| m.modified())
                                             .ok();
@@ -354,6 +383,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                                             data.config_file_mtime = mtime;
                                             data.reload_config();
                                         }
+                                    } else if shader_touched {
+                                        tracing::info!("Shader directory change detected, reloading config");
+                                        data.reload_config();
                                     }
                                     Ok(PostAction::Continue)
                                 },
