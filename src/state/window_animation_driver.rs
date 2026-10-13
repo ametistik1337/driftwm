@@ -176,6 +176,62 @@ impl DriftWm {
         self.drop_resize_crossfade(id);
     }
 
+    pub(crate) fn end_element_animation_except_wobbly(&mut self, element: &StageWindow) {
+        let Some(id) = self.stage.id_of(element) else {
+            return;
+        };
+        if self.window_animations.is_wobbly(id) {
+            return;
+        }
+        self.end_element_animation(element);
+    }
+
+    pub(crate) fn start_wobbly_animation(
+        &mut self,
+        element: &StageWindow,
+        grab_point: Point<f64, Logical>,
+    ) {
+        if !self.config.effects.wobbly_windows {
+            return;
+        }
+        let Some(id) = self.stage.id_of(element) else {
+            return;
+        };
+        let Some(loc) = self.stage.position_of(element) else {
+            return;
+        };
+        let size = driftwm::stage::StageElement::size(element);
+        let rect = Rectangle::new(loc.to_f64(), size.to_f64());
+        self.window_animations.start_wobbly(id, rect, grab_point);
+    }
+
+    pub(crate) fn update_wobbly_animation(
+        &mut self,
+        element: &StageWindow,
+        new_loc: Point<i32, Logical>,
+        cursor: Point<f64, Logical>,
+    ) {
+        if !self.config.effects.wobbly_windows {
+            return;
+        }
+        let Some(id) = self.stage.id_of(element) else {
+            return;
+        };
+        let size = driftwm::stage::StageElement::size(element);
+        let rect = Rectangle::new(new_loc.to_f64(), size.to_f64());
+        self.window_animations.update_wobbly(id, rect, cursor);
+    }
+
+    pub(crate) fn release_wobbly_animation(&mut self, element: &StageWindow) {
+        if !self.config.effects.wobbly_windows {
+            return;
+        }
+        let Some(id) = self.stage.id_of(element) else {
+            return;
+        };
+        self.window_animations.release_wobbly(id);
+    }
+
     /// Shared start path for every geometry chase: resolve the id, honor the
     /// interactive-grab guard, instant-complete (skip) when the seed rect
     /// intersects no drawable output, else (re)start the chase. `replace_visual`
@@ -540,6 +596,9 @@ impl DriftWm {
     /// primary plane, which is the same one-element rule `clear_color_for`
     /// records. That is the trade the rule buys, opted into per window.
     pub(crate) fn fullscreen_conceals_canvas(&self, output: &Output) -> bool {
+        if self.config.background.pause_on_fullscreen && self.is_output_visually_fullscreen(output) {
+            return true;
+        }
         self.is_output_visually_fullscreen(output)
             && self.visually_fullscreen_windows_on(output).iter().all(|w| {
                 w.wl_surface()
@@ -772,6 +831,9 @@ impl DriftWm {
                 frame_factor,
                 now,
                 eligible,
+                self.config.effects.wobbly_stiffness,
+                self.config.effects.wobbly_drag,
+                self.config.effects.wobbly_move_factor,
             );
             // The leg is moving now, so a view move parked on it goes with it —
             // the budget expiring fires it too, since that leg starts moving as

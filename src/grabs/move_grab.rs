@@ -80,6 +80,8 @@ pub struct MoveGrab {
     /// reassigning to whichever output the cursor is on — no snap, no cluster,
     /// no edge-pan (pinned windows ignore the camera).
     pinned_grab_offset: Option<Point<f64, Logical>>,
+    /// Whether wobbly animation has been started for this interactive move.
+    wobbly_started: bool,
 }
 
 impl MoveGrab {
@@ -103,6 +105,7 @@ impl MoveGrab {
             cluster_members: to_cluster_members(cluster_members),
             last_mapped_loc: None,
             pinned_grab_offset: None,
+            wobbly_started: false,
         }
     }
 
@@ -136,6 +139,7 @@ impl MoveGrab {
             cluster_members: to_cluster_members(cluster_members),
             last_mapped_loc: None,
             pinned_grab_offset: None,
+            wobbly_started: false,
         }
     }
 
@@ -164,6 +168,7 @@ impl MoveGrab {
             cluster_members: Vec::new(),
             last_mapped_loc: None,
             pinned_grab_offset: Some(grab_offset),
+            wobbly_started: false,
         }
     }
 
@@ -188,6 +193,7 @@ impl MoveGrab {
             cluster_members: Vec::new(),
             last_mapped_loc: None,
             pinned_grab_offset: Some(grab_offset),
+            wobbly_started: false,
         }
     }
 
@@ -359,6 +365,11 @@ impl PointerGrab<DriftWm> for MoveGrab {
             return;
         };
 
+        if !self.wobbly_started {
+            data.start_wobbly_animation(&element, event.location);
+            self.wobbly_started = true;
+        }
+
         if let Some(grab_offset) = self.pinned_grab_offset {
             let output = data
                 .focused_output
@@ -441,6 +452,7 @@ impl PointerGrab<DriftWm> for MoveGrab {
             // primary/member (`refresh_stable_snap_rect` early-returns without a
             // surface to key), so this stays one shared path across both arms.
             if let Some(element) = self.target.resolve(&data.stage) {
+                data.release_wobbly_animation(&element);
                 data.refresh_stable_snap_rect(&element);
             }
             for (member, _) in self.resolved_members(data) {
@@ -452,6 +464,9 @@ impl PointerGrab<DriftWm> for MoveGrab {
 
     fn unset(&mut self, data: &mut DriftWm) {
         data.clear_edge_pan(&self.output);
+        if let Some(element) = self.target.resolve(&data.stage) {
+            data.release_wobbly_animation(&element);
+        }
         // Both arms armed `interactive_move` at grab install (guarding relaunch
         // adoption and animation starts); balance it here.
         data.disarm_interactive_move(&self.target);
@@ -504,7 +519,7 @@ impl MoveGrab {
             .pin_of(element)
             .is_none_or(|site| site.screen_pos != new_screen_pos)
         {
-            data.end_element_animation(element);
+            data.end_element_animation_except_wobbly(element);
         }
         // Guarded: the pin may have been toggled off mid-drag, and an
         // unconditional set_pin would silently re-pin.
@@ -521,6 +536,7 @@ impl MoveGrab {
             .0
             .to_i32_round();
         data.map_window(element.clone(), canvas, false);
+        data.update_wobbly_animation(element, canvas, location);
         if self.last_mapped_loc != Some(canvas) {
             data.render.blur_geometry_generation += 1;
             self.last_mapped_loc = Some(canvas);
@@ -580,6 +596,7 @@ impl MoveGrab {
             crate::grabs::drag_map_window(data, member, member_pos);
         }
         crate::grabs::drag_map_window(data, element.clone(), new_loc);
+        data.update_wobbly_animation(element, new_loc, location);
 
         // Sub-pixel motion that resolves to the same integer canvas position
         // doesn't actually shift the window, so blurred neighbours don't need
@@ -662,6 +679,7 @@ impl TouchGrab<DriftWm> for MoveGrab {
             data.clear_edge_pan(&self.output);
             data.touch_state.edge_pan = None;
             if let Some(element) = self.target.resolve(&data.stage) {
+                data.release_wobbly_animation(&element);
                 data.refresh_stable_snap_rect(&element);
             }
             for (member, _) in self.resolved_members(data) {
@@ -692,6 +710,11 @@ impl TouchGrab<DriftWm> for MoveGrab {
             handle.motion(data, None, event);
             return;
         };
+
+        if !self.wobbly_started {
+            data.start_wobbly_animation(&element, event.location);
+            self.wobbly_started = true;
+        }
         // Pinned windows ignore the camera, so no edge-pan either.
         if let Some(grab_offset) = self.pinned_grab_offset {
             let output = self.output.clone();

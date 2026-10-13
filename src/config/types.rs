@@ -1069,6 +1069,14 @@ pub struct EffectsConfig {
     pub window_effect: WindowEffect,
     /// Optional duration override for the window effect animation in milliseconds
     pub window_effect_duration_ms: Option<u64>,
+    /// Whether windows wobble pleasantly like jelly during interactive moves (KDE style)
+    pub wobbly_windows: bool,
+    /// Wobbly spring stiffness (spring constant)
+    pub wobbly_stiffness: f64,
+    /// Wobbly damping factor (friction/drag), in (0, 1)
+    pub wobbly_drag: f64,
+    /// Wobbly displacement factor
+    pub wobbly_move_factor: f64,
 }
 
 impl Default for EffectsConfig {
@@ -1081,6 +1089,10 @@ impl Default for EffectsConfig {
             animation_scale: 0.95,
             window_effect: WindowEffect::Default,
             window_effect_duration_ms: None,
+            wobbly_windows: false,
+            wobbly_stiffness: 0.15,
+            wobbly_drag: 0.85,
+            wobbly_move_factor: 0.10,
         }
     }
 }
@@ -1420,6 +1432,8 @@ pub struct BackgroundConfig {
     /// the refresh rate, and between animation ticks the compositor reuses the
     /// composited result instead of re-evaluating the shader.
     pub animate_fps: u32,
+    /// Pause all background shaders, animations and effects when a window is fullscreen.
+    pub pause_on_fullscreen: bool,
 }
 
 #[cfg(test)]

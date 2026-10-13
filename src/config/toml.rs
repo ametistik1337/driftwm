@@ -61,6 +61,10 @@ pub(super) struct EffectsFileConfig {
     pub animation_scale: Option<f64>,
     pub window_effect: Option<String>,
     pub window_effect_duration_ms: Option<u64>,
+    pub wobbly_windows: Option<bool>,
+    pub wobbly_stiffness: Option<f64>,
+    pub wobbly_drag: Option<f64>,
+    pub wobbly_move_factor: Option<f64>,
 }
 
 #[derive(Serialize, Deserialize, Default)]
@@ -254,6 +258,7 @@ pub(super) struct BackgroundFileConfig {
     pub transparent_shader: Option<bool>,
     pub cache_budget_mb: Option<u32>,
     pub animate_fps: Option<u32>,
+    pub pause_on_fullscreen: Option<bool>,
 }
 
 #[derive(Serialize, Deserialize, Default)]

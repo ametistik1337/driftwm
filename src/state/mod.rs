@@ -41,6 +41,7 @@ mod viewport;
 mod viewport_animation;
 pub(crate) mod window_animation;
 mod window_animation_driver;
+pub(crate) mod wobbly;
 mod window_frame;
 mod window_lifecycle;
 pub use cluster_snapshot::{ClusterMember, ClusterResizeSnapshot};

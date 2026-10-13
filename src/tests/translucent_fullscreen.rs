@@ -243,3 +243,19 @@ fn a_translucent_fullscreen_output_stays_background_render_eligible() {
 
     f.state().exit_fullscreen_on(&output);
 }
+
+#[test]
+fn pause_on_fullscreen_conceals_canvas_even_when_window_is_translucent() {
+    let cfg = config(
+        "[[window_rules]]\napp_id = \"fs\"\nopacity = 0.5\n\n[background]\npause_on_fullscreen = true\n"
+    );
+    let mut f = Fixture::with_config(cfg);
+    let (_id, _surface, output, _window) = settled_fullscreen(&mut f, (800, 600));
+
+    assert!(
+        f.state().fullscreen_conceals_canvas(&output),
+        "pause_on_fullscreen must conceal canvas and stop background shader even if window is translucent"
+    );
+
+    f.state().exit_fullscreen_on(&output);
+}

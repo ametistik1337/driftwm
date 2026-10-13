@@ -181,9 +181,13 @@ impl DriftWm {
         }
 
         // child_env auto-rebuilds via `Config::from_raw`; process env
-        // untouched. Forward DISPLAY (set by xwayland::setup at startup).
+        // untouched. Forward DISPLAY (set by xwayland::setup at startup)
+        // and WAYLAND_DISPLAY (set at compositor startup).
         if let Some(display) = self.config.child_env.get("DISPLAY").cloned() {
             new_config.child_env.insert("DISPLAY".into(), display);
+        }
+        if let Some(wayland_display) = self.config.child_env.get("WAYLAND_DISPLAY").cloned() {
+            new_config.child_env.insert("WAYLAND_DISPLAY".into(), wayland_display);
         }
 
         // Reconcile the live bookmark registry with the config seed diff. Config

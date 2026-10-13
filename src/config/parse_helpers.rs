@@ -546,6 +546,24 @@ pub(super) fn parse_effects_config(raw: EffectsFileConfig, errors: &mut Warnings
         ),
         window_effect,
         window_effect_duration_ms: raw.window_effect_duration_ms,
+        wobbly_windows: raw.wobbly_windows.unwrap_or(false),
+        wobbly_stiffness: non_negative(
+            raw.wobbly_stiffness.unwrap_or(0.15),
+            "effects.wobbly_stiffness",
+            errors,
+        ),
+        wobbly_drag: unit_range_or_default(
+            raw.wobbly_drag,
+            "effects.wobbly_drag",
+            0.85,
+            errors,
+        ),
+        wobbly_move_factor: unit_range_or_default(
+            raw.wobbly_move_factor,
+            "effects.wobbly_move_factor",
+            0.10,
+            errors,
+        ),
     }
 }
 

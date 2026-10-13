@@ -779,6 +779,7 @@ impl Config {
             transparent_shader: raw.background.transparent_shader.unwrap_or(false),
             cache_budget_mb: raw.background.cache_budget_mb.unwrap_or(128),
             animate_fps: raw.background.animate_fps.unwrap_or(0).min(1000),
+            pause_on_fullscreen: raw.background.pause_on_fullscreen.unwrap_or(false),
             kind: resolve_background_kind(raw.background, &mut errors),
         };
 
@@ -1402,6 +1403,7 @@ fn resolve_background_kind(
         transparent_shader: _,
         cache_budget_mb: _,
         animate_fps: _,
+        pause_on_fullscreen: _,
     } = raw;
     let texture = texture.as_deref().map(expand_tilde);
     if let Some(t) = kind.as_deref() {

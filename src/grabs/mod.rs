@@ -128,7 +128,7 @@ pub(crate) fn drag_map_window(
     pos: smithay::utils::Point<i32, smithay::utils::Logical>,
 ) {
     if data.stage.position_of(&element) != Some(pos) {
-        data.end_element_animation(&element);
+        data.end_element_animation_except_wobbly(&element);
     }
     data.map_window(element, pos, false);
 }

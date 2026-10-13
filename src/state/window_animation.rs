@@ -238,6 +238,7 @@ enum AnimationKind {
     Open {
         progress: f64,
     },
+    Wobbly(Box<crate::state::wobbly::WobblyState>),
     Geometry {
         /// Last computed rect — what the renderer draws, and the seed for the
         /// next leg when the target moves.
@@ -506,6 +507,57 @@ impl WindowAnimations {
         );
     }
 
+    /// Begin a KDE-style wobbly jelly animation for an interactively dragged window.
+    pub fn start_wobbly(
+        &mut self,
+        id: ElementId,
+        rect: Rectangle<f64, Logical>,
+        grab_point: Point<f64, Logical>,
+    ) {
+        let wobbly = crate::state::wobbly::WobblyState::new(rect, grab_point);
+        self.animations.insert(
+            id,
+            WindowAnimation {
+                kind: AnimationKind::Wobbly(Box::new(wobbly)),
+            },
+        );
+    }
+
+    /// Update target rect and cursor position for a wobbly dragged window.
+    pub fn update_wobbly(
+        &mut self,
+        id: ElementId,
+        new_rect: Rectangle<f64, Logical>,
+        cursor: Point<f64, Logical>,
+    ) {
+        if let Some(WindowAnimation {
+            kind: AnimationKind::Wobbly(wobbly),
+        }) = self.animations.get_mut(&id)
+        {
+            wobbly.on_move(new_rect, cursor);
+        }
+    }
+
+    /// Release grab constraint on mouse/touch release, letting the window oscillate to settle.
+    pub fn release_wobbly(&mut self, id: ElementId) {
+        if let Some(WindowAnimation {
+            kind: AnimationKind::Wobbly(wobbly),
+        }) = self.animations.get_mut(&id)
+        {
+            wobbly.on_release();
+        }
+    }
+
+    /// Whether window `id` is currently playing a wobbly jelly animation.
+    pub fn is_wobbly(&self, id: ElementId) -> bool {
+        matches!(
+            self.animations.get(&id),
+            Some(WindowAnimation {
+                kind: AnimationKind::Wobbly(_),
+            })
+        )
+    }
+
     /// `id` holds an open fade that has never been drawn — mapped this commit
     /// and not ticked since. A geometry chase armed in that same commit takes
     /// the fade over instead of destroying it.
@@ -541,7 +593,7 @@ impl WindowAnimations {
             Some(WindowAnimation {
                 kind: AnimationKind::Geometry { open_fade, .. },
             }) => *open_fade,
-            None => None,
+            _ => None,
         }
     }
 
@@ -812,6 +864,9 @@ impl WindowAnimations {
                 AnimationKind::Geometry { visual, space, .. } => {
                     (*id, Some((space.clone(), *visual)))
                 }
+                AnimationKind::Wobbly(wobbly) => {
+                    (*id, Some((AnimSpace::Canvas, wobbly.visual_rect())))
+                }
             })
             .collect()
     }
@@ -846,6 +901,15 @@ impl WindowAnimations {
                     loc: rect.loc,
                     size: rect.size,
                     alpha: open_alpha(p),
+                    cap_content: false,
+                }
+            }
+            AnimationKind::Wobbly(wobbly) => {
+                let vr = wobbly.visual_rect();
+                AnimatedVisual {
+                    loc: vr.loc,
+                    size: vr.size,
+                    alpha: 1.0,
                     cap_content: false,
                 }
             }
@@ -954,6 +1018,9 @@ impl WindowAnimations {
         frame_factor: f64,
         now: Instant,
         eligible: bool,
+        wobbly_stiffness: f64,
+        wobbly_drag: f64,
+        wobbly_move_factor: f64,
     ) -> bool {
         // Resolved before the entry is borrowed, since the answer lives on a
         // different entry. Asked as "still frozen after a tick at `now`" rather
@@ -980,6 +1047,13 @@ impl WindowAnimations {
                 }
                 *progress += (1.0 - *progress) * frame_factor;
                 1.0 - *progress > PROGRESS_DONE_EPSILON
+            }
+            AnimationKind::Wobbly(wobbly) => {
+                if !eligible {
+                    return false;
+                }
+                let dt = 1.0 / 60.0;
+                wobbly.step(dt, wobbly_stiffness, wobbly_drag, wobbly_move_factor)
             }
             AnimationKind::Geometry {
                 visual,

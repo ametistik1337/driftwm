@@ -323,6 +323,10 @@
 # animation_scale = 0.95         # open/close grow/shrink amplitude (1 = fade only)
 # window_effect = "default"      # window open/close effect: "default" (scale + fade), "portal" (Rick & Morty C-137 portal), "fire" (Compiz Fire), "tv" (Retro CRT), "doom" (Doom Melt), "anomaly" (S.T.A.L.K.E.R. 2 Anomaly), or custom GLSL shader path/name from ~/.config/driftwm/shaders/
 # # window_effect_duration_ms = 750 # optional animation duration override in milliseconds
+# wobbly_windows = false          # whether windows wobble pleasantly like jelly during moves (KDE style)
+# wobbly_stiffness = 0.15         # wobbly spring stiffness
+# wobbly_drag = 0.85              # wobbly damping factor in (0, 1)
+# wobbly_move_factor = 0.10       # wobbly motion displacement multiplier
 
 [background]
 # # Five types: "default" (built-in dot-grid — the default), "shader", "tile",
@@ -377,6 +381,9 @@
 # # rate; between ticks the compositor reuses the composited result instead of
 # # re-evaluating the shader, so this directly scales the background's GPU cost.
 # animate_fps = 0
+# # Freeze and suppress background animations and live canvas effects while an output
+# # is visually fullscreen to maximize performance.
+# pause_on_fullscreen = false
 
 [bindings]
 # # Opt out of built-in default bindings by category, for a clean slate.

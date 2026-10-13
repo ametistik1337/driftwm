@@ -672,7 +672,31 @@ Default: `"default"`
 
 window open/close effect: "default" (scale + fade), "portal" (Rick & Morty C-137 portal), "fire" (Compiz Fire), "tv" (Retro CRT), "doom" (Doom Melt), "anomaly" (S.T.A.L.K.E.R. 2 Anomaly), or custom GLSL shader path/name from ~/.config/driftwm/shaders/
 
+### `wobbly_windows`
+
+Default: `false`
+
 window_effect_duration_ms = 750 # optional animation duration override in milliseconds
+
+whether windows wobble pleasantly like jelly during moves (KDE style)
+
+### `wobbly_stiffness`
+
+Default: `0.15`
+
+wobbly spring stiffness
+
+### `wobbly_drag`
+
+Default: `0.85`
+
+wobbly damping factor in (0, 1)
+
+### `wobbly_move_factor`
+
+Default: `0.10`
+
+wobbly motion displacement multiplier
 
 ## `[background]`
 
@@ -738,6 +762,12 @@ Memory ceiling (MB) shared by cache_shader and gigapixel-TIFF wallpapers, with L
 Default: `0`
 
 Frame-rate cap (0-1000) for animated (`u_time`) shader backgrounds. 0 = every output frame. Slow-moving shaders look identical well below the refresh rate; between ticks the compositor reuses the composited result instead of re-evaluating the shader, so this directly scales the background's GPU cost.
+
+### `pause_on_fullscreen`
+
+Default: `false`
+
+Freeze and suppress background animations and live canvas effects while an output is visually fullscreen to maximize performance.
 
 ## `[bindings]`
 
