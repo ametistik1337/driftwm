@@ -621,7 +621,8 @@ render_elements! {
     ClosingWindow=WindowTransformElement<TextureRenderElement<GlesTexture>>,
     PortalClosingWindow=WindowTransformElement<PortalWindowElement>,
     FireClosingWindow=WindowTransformElement<FireWindowElement>,
-    GlitchClosingWindow=WindowTransformElement<GlitchWindowElement>,
+    TvClosingWindow=WindowTransformElement<TvWindowElement>,
+    DoomClosingWindow=WindowTransformElement<DoomWindowElement>,
     Layer=WaylandSurfaceRenderElement<GlesRenderer>,
     Cursor=MemoryRenderBufferRenderElement<GlesRenderer>,
     CursorSurface=smithay::backend::renderer::element::Wrap<WaylandSurfaceRenderElement<GlesRenderer>>,
@@ -1179,9 +1180,9 @@ impl RenderElement<GlesRenderer> for FireWindowElement {
     }
 }
 
-/// Render element that applies the animated Burn My Windows Cyberpunk Glitch shader to a window texture.
+/// Render element that applies the animated Burn My Windows TV (CRT collapse) shader to a window texture.
 #[derive(Debug)]
-pub struct GlitchWindowElement {
+pub struct TvWindowElement {
     inner: TextureRenderElement<GlesTexture>,
     shader: GlesTexProgram,
     progress: f32,
@@ -1189,14 +1190,9 @@ pub struct GlitchWindowElement {
     duration: f32,
     size: (f32, f32),
     color: (f32, f32, f32, f32),
-    seed: f32,
-    scale: f32,
-    strength: f32,
-    speed: f32,
 }
 
-impl GlitchWindowElement {
-    #[allow(clippy::too_many_arguments)]
+impl TvWindowElement {
     pub fn new(
         inner: TextureRenderElement<GlesTexture>,
         shader: GlesTexProgram,
@@ -1205,10 +1201,6 @@ impl GlitchWindowElement {
         duration: f32,
         size: (f32, f32),
         color: (f32, f32, f32, f32),
-        seed: f32,
-        scale: f32,
-        strength: f32,
-        speed: f32,
     ) -> Self {
         Self {
             inner,
@@ -1218,10 +1210,6 @@ impl GlitchWindowElement {
             duration,
             size,
             color,
-            seed,
-            scale,
-            strength,
-            speed,
         }
     }
 
@@ -1232,15 +1220,11 @@ impl GlitchWindowElement {
             Uniform::new("u_duration", self.duration),
             Uniform::new("u_size", self.size),
             Uniform::new("u_color", self.color),
-            Uniform::new("u_seed", self.seed),
-            Uniform::new("u_scale", self.scale),
-            Uniform::new("u_strength", self.strength),
-            Uniform::new("u_speed", self.speed),
         ]
     }
 }
 
-impl Element for GlitchWindowElement {
+impl Element for TvWindowElement {
     fn id(&self) -> &Id {
         self.inner.id()
     }
@@ -1282,7 +1266,130 @@ impl Element for GlitchWindowElement {
     }
 }
 
-impl RenderElement<GlesRenderer> for GlitchWindowElement {
+impl RenderElement<GlesRenderer> for TvWindowElement {
+    fn draw(
+        &self,
+        frame: &mut GlesFrame<'_, '_>,
+        src: Rectangle<f64, smithay::utils::Buffer>,
+        dst: Rectangle<i32, Physical>,
+        damage: &[Rectangle<i32, Physical>],
+        opaque_regions: &[Rectangle<i32, Physical>],
+        user_data: Option<&smithay::utils::user_data::UserDataMap>,
+    ) -> Result<(), GlesError> {
+        frame.override_default_tex_program(self.shader.clone(), self.compute_uniforms());
+        let result = <TextureRenderElement<GlesTexture> as RenderElement<GlesRenderer>>::draw(
+            &self.inner,
+            frame,
+            src,
+            dst,
+            damage,
+            opaque_regions,
+            user_data,
+        );
+        frame.clear_tex_program_override();
+        result
+    }
+
+    fn underlying_storage(&self, renderer: &mut GlesRenderer) -> Option<UnderlyingStorage<'_>> {
+        self.inner.underlying_storage(renderer)
+    }
+}
+
+/// Render element that applies the animated Burn My Windows Doom Melt shader to a window texture.
+#[derive(Debug)]
+pub struct DoomWindowElement {
+    inner: TextureRenderElement<GlesTexture>,
+    shader: GlesTexProgram,
+    progress: f32,
+    for_opening: bool,
+    duration: f32,
+    size: (f32, f32),
+    horizontal_scale: f32,
+    vertical_scale: f32,
+    pixel_size: f32,
+}
+
+impl DoomWindowElement {
+    pub fn new(
+        inner: TextureRenderElement<GlesTexture>,
+        shader: GlesTexProgram,
+        progress: f32,
+        for_opening: bool,
+        duration: f32,
+        size: (f32, f32),
+        horizontal_scale: f32,
+        vertical_scale: f32,
+        pixel_size: f32,
+    ) -> Self {
+        Self {
+            inner,
+            shader,
+            progress,
+            for_opening,
+            duration,
+            size,
+            horizontal_scale,
+            vertical_scale,
+            pixel_size,
+        }
+    }
+
+    fn compute_uniforms(&self) -> Vec<Uniform<'static>> {
+        vec![
+            Uniform::new("u_progress", self.progress),
+            Uniform::new("u_for_opening", if self.for_opening { 1.0f32 } else { 0.0f32 }),
+            Uniform::new("u_duration", self.duration),
+            Uniform::new("u_size", self.size),
+            Uniform::new("u_horizontal_scale", self.horizontal_scale),
+            Uniform::new("u_vertical_scale", self.vertical_scale),
+            Uniform::new("u_pixel_size", self.pixel_size),
+        ]
+    }
+}
+
+impl Element for DoomWindowElement {
+    fn id(&self) -> &Id {
+        self.inner.id()
+    }
+
+    fn current_commit(&self) -> CommitCounter {
+        self.inner.current_commit()
+    }
+
+    fn src(&self) -> Rectangle<f64, smithay::utils::Buffer> {
+        self.inner.src()
+    }
+
+    fn transform(&self) -> Transform {
+        self.inner.transform()
+    }
+
+    fn geometry(&self, scale: Scale<f64>) -> Rectangle<i32, Physical> {
+        self.inner.geometry(scale)
+    }
+
+    fn damage_since(
+        &self,
+        scale: Scale<f64>,
+        commit: Option<CommitCounter>,
+    ) -> DamageSet<i32, Physical> {
+        self.inner.damage_since(scale, commit)
+    }
+
+    fn opaque_regions(&self, _scale: Scale<f64>) -> OpaqueRegions<i32, Physical> {
+        OpaqueRegions::default()
+    }
+
+    fn alpha(&self) -> f32 {
+        self.inner.alpha()
+    }
+
+    fn kind(&self) -> Kind {
+        self.inner.kind()
+    }
+}
+
+impl RenderElement<GlesRenderer> for DoomWindowElement {
     fn draw(
         &self,
         frame: &mut GlesFrame<'_, '_>,

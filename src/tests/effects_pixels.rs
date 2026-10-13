@@ -9,8 +9,9 @@ use smithay::utils::{Physical, Point, Scale, Size, Transform};
 
 use super::gl;
 use crate::render::{
-    FireWindowElement, GlitchWindowElement, OutputRenderElements, WindowTransformElement,
-    compile_fire_shader, compile_glitch_shader, render_elements_to_rgba,
+    DoomWindowElement, FireWindowElement, OutputRenderElements, TvWindowElement,
+    WindowTransformElement, compile_doom_shader, compile_fire_shader, compile_tv_shader,
+    render_elements_to_rgba,
 };
 
 #[test]
@@ -97,14 +98,14 @@ fn fire_shader_renders_accurately() {
 
 #[test]
 #[ignore = "needs Mesa surfaceless EGL; run with --include-ignored"]
-fn glitch_shader_renders_accurately() {
+fn tv_shader_renders_accurately() {
     let _gl = gl::lock();
-    let Some(mut renderer) = gl::surfaceless_renderer("glitch_shader_renders_accurately") else {
+    let Some(mut renderer) = gl::surfaceless_renderer("tv_shader_renders_accurately") else {
         return;
     };
 
-    let Some(shader) = compile_glitch_shader(&mut renderer) else {
-        panic!("failed to compile glitch shader");
+    let Some(shader) = compile_tv_shader(&mut renderer) else {
+        panic!("failed to compile tv shader");
     };
 
     let width = 200;
@@ -129,24 +130,20 @@ fn glitch_shader_renders_accurately() {
         Kind::Unspecified,
     );
 
-    let glitch = GlitchWindowElement::new(
+    let tv = TvWindowElement::new(
         elem,
         shader,
         0.5,
         false,
-        0.75,
+        0.4,
         (width as f32, height as f32),
-        (0.392, 0.627, 1.0, 1.0),
-        42.0,
-        1.0,
-        2.0,
-        2.0,
+        (1.0, 1.0, 1.0, 1.0),
     );
 
     let center = Point::from((width as f64 / 2.0, height as f64 / 2.0));
-    let transform_elem = OutputRenderElements::GlitchClosingWindow(
+    let transform_elem = OutputRenderElements::TvClosingWindow(
         WindowTransformElement::new(
-            glitch,
+            tv,
             center,
             Point::default(),
             Scale::from(1.0),
@@ -160,12 +157,85 @@ fn glitch_shader_renders_accurately() {
         Scale::from(1.0),
         &refs,
     )
-    .expect("render glitch elements to rgba");
+    .expect("render tv elements to rgba");
 
     assert_eq!(bytes.len(), (width * height * 4) as usize);
 
     let img = image::RgbaImage::from_raw(width as u32, height as u32, bytes)
         .expect("valid rgba image");
-    let out_path = "/tmp/glitch_driftwm_test.png";
-    img.save(out_path).expect("save rendered glitch image");
+    let out_path = "/tmp/tv_driftwm_test.png";
+    img.save(out_path).expect("save rendered tv image");
+}
+
+#[test]
+#[ignore = "needs Mesa surfaceless EGL; run with --include-ignored"]
+fn doom_shader_renders_accurately() {
+    let _gl = gl::lock();
+    let Some(mut renderer) = gl::surfaceless_renderer("doom_shader_renders_accurately") else {
+        return;
+    };
+
+    let Some(shader) = compile_doom_shader(&mut renderer) else {
+        panic!("failed to compile doom shader");
+    };
+
+    let width = 200;
+    let height = 200;
+    let phys_size = Size::<i32, Physical>::from((width, height));
+    let buffer_size = smithay::utils::Size::from((width, height));
+
+    let texture = Offscreen::<GlesTexture>::create_buffer(
+        &mut renderer,
+        Fourcc::Abgr8888,
+        buffer_size,
+    )
+    .expect("create offscreen texture");
+
+    let tex_buf = TextureBuffer::from_texture(&mut renderer, texture, 1, Transform::Normal, None);
+    let elem = TextureRenderElement::from_texture_buffer(
+        Point::<f64, Physical>::from((0.0, 0.0)),
+        &tex_buf,
+        Some(1.0),
+        None,
+        Some(smithay::utils::Size::from((width, height))),
+        Kind::Unspecified,
+    );
+
+    let doom = DoomWindowElement::new(
+        elem,
+        shader,
+        0.5,
+        false,
+        0.7,
+        (width as f32, height as f32),
+        2.0,
+        3.0,
+        4.0,
+    );
+
+    let center = Point::from((width as f64 / 2.0, height as f64 / 2.0));
+    let transform_elem = OutputRenderElements::DoomClosingWindow(
+        WindowTransformElement::new(
+            doom,
+            center,
+            Point::default(),
+            Scale::from(1.0),
+        ),
+    );
+
+    let refs = [&transform_elem];
+    let bytes = render_elements_to_rgba(
+        &mut renderer,
+        phys_size,
+        Scale::from(1.0),
+        &refs,
+    )
+    .expect("render doom elements to rgba");
+
+    assert_eq!(bytes.len(), (width * height * 4) as usize);
+
+    let img = image::RgbaImage::from_raw(width as u32, height as u32, bytes)
+        .expect("valid rgba image");
+    let out_path = "/tmp/doom_driftwm_test.png";
+    img.save(out_path).expect("save rendered doom image");
 }

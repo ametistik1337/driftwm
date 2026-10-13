@@ -321,7 +321,7 @@
                                  # a restarted daemon) always refresh, 0 included.
 # animation_speed = 0.5          # window open/close/move/resize lerp factor (higher = faster; 1 = instant)
 # animation_scale = 0.95         # open/close grow/shrink amplitude (1 = fade only)
-# window_effect = "default"      # window open/close effect: "default" (scale + fade), "portal" (Rick & Morty C-137 portal), "fire" (Compiz Fire), "glitch" (Cyberpunk Glitch)
+# window_effect = "default"      # window open/close effect: "default" (scale + fade), "portal" (Rick & Morty C-137 portal), "fire" (Compiz Fire), "tv" (Retro CRT), "doom" (Doom Melt)
 
 [background]
 # # Five types: "default" (built-in dot-grid — the default), "shader", "tile",

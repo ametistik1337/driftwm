@@ -817,9 +817,9 @@ pub fn compile_fire_shader(renderer: &mut GlesRenderer) -> Option<GlesTexProgram
     }
 }
 
-const WINDOW_GLITCH_SRC: &str = include_str!("../shaders/window_glitch.glsl");
+const WINDOW_TV_SRC: &str = include_str!("../shaders/window_tv.glsl");
 
-pub const WINDOW_GLITCH_UNIFORMS: &[UniformName<'static>] = &[
+pub const WINDOW_TV_UNIFORMS: &[UniformName<'static>] = &[
     UniformName {
         name: Cow::Borrowed("u_progress"),
         type_: UniformType::_1f,
@@ -840,29 +840,56 @@ pub const WINDOW_GLITCH_UNIFORMS: &[UniformName<'static>] = &[
         name: Cow::Borrowed("u_color"),
         type_: UniformType::_4f,
     },
+];
+
+pub fn compile_tv_shader(renderer: &mut GlesRenderer) -> Option<GlesTexProgram> {
+    match renderer.compile_custom_texture_shader(WINDOW_TV_SRC, WINDOW_TV_UNIFORMS) {
+        Ok(shader) => Some(shader),
+        Err(e) => {
+            tracing::error!("Failed to compile tv shader: {e}");
+            None
+        }
+    }
+}
+
+const WINDOW_DOOM_SRC: &str = include_str!("../shaders/window_doom.glsl");
+
+pub const WINDOW_DOOM_UNIFORMS: &[UniformName<'static>] = &[
     UniformName {
-        name: Cow::Borrowed("u_seed"),
+        name: Cow::Borrowed("u_progress"),
         type_: UniformType::_1f,
     },
     UniformName {
-        name: Cow::Borrowed("u_scale"),
+        name: Cow::Borrowed("u_for_opening"),
         type_: UniformType::_1f,
     },
     UniformName {
-        name: Cow::Borrowed("u_strength"),
+        name: Cow::Borrowed("u_duration"),
         type_: UniformType::_1f,
     },
     UniformName {
-        name: Cow::Borrowed("u_speed"),
+        name: Cow::Borrowed("u_size"),
+        type_: UniformType::_2f,
+    },
+    UniformName {
+        name: Cow::Borrowed("u_horizontal_scale"),
+        type_: UniformType::_1f,
+    },
+    UniformName {
+        name: Cow::Borrowed("u_vertical_scale"),
+        type_: UniformType::_1f,
+    },
+    UniformName {
+        name: Cow::Borrowed("u_pixel_size"),
         type_: UniformType::_1f,
     },
 ];
 
-pub fn compile_glitch_shader(renderer: &mut GlesRenderer) -> Option<GlesTexProgram> {
-    match renderer.compile_custom_texture_shader(WINDOW_GLITCH_SRC, WINDOW_GLITCH_UNIFORMS) {
+pub fn compile_doom_shader(renderer: &mut GlesRenderer) -> Option<GlesTexProgram> {
+    match renderer.compile_custom_texture_shader(WINDOW_DOOM_SRC, WINDOW_DOOM_UNIFORMS) {
         Ok(shader) => Some(shader),
         Err(e) => {
-            tracing::error!("Failed to compile glitch shader: {e}");
+            tracing::error!("Failed to compile doom shader: {e}");
             None
         }
     }

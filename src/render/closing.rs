@@ -24,8 +24,9 @@ use driftwm::config::WindowEffect;
 use crate::state::SuspendedWindow;
 
 use super::{
-    FireWindowElement, GlitchWindowElement, OutputRenderElements, PortalWindowElement,
-    TrimmedElement, WindowRenderAnimation, WindowTransformElement, painted_rect, shaders,
+    DoomWindowElement, FireWindowElement, OutputRenderElements, PortalWindowElement,
+    TrimmedElement, TvWindowElement, WindowRenderAnimation, WindowTransformElement,
+    painted_rect, shaders,
 };
 
 /// A progress-based effect ends when within this of 1.0 (a 1% alpha residue is
@@ -743,7 +744,8 @@ fn effect_duration(effect: WindowEffect) -> Duration {
     match effect {
         WindowEffect::Portal => Duration::from_millis(1250),
         WindowEffect::Fire => Duration::from_millis(1200),
-        WindowEffect::Glitch => Duration::from_millis(750),
+        WindowEffect::Tv => Duration::from_millis(400),
+        WindowEffect::Doom => Duration::from_millis(700),
         WindowEffect::Default => Duration::from_millis(300),
     }
 }
@@ -816,7 +818,8 @@ pub(crate) fn snapshot_screen(
 pub struct WindowEffectShaders<'a> {
     pub portal: Option<&'a GlesTexProgram>,
     pub fire: Option<&'a GlesTexProgram>,
-    pub glitch: Option<&'a GlesTexProgram>,
+    pub tv: Option<&'a GlesTexProgram>,
+    pub doom: Option<&'a GlesTexProgram>,
 }
 
 impl ClosingSnapshot {
@@ -925,8 +928,8 @@ impl ClosingSnapshot {
                     ),
                 ));
             }
-        } else if self.effect == WindowEffect::Glitch {
-            if let Some(shader) = shaders.glitch {
+        } else if self.effect == WindowEffect::Tv {
+            if let Some(shader) = shaders.tv {
                 let texture = TextureRenderElement::from_texture_buffer(
                     loc_phys,
                     &self.buffer,
@@ -935,22 +938,48 @@ impl ClosingSnapshot {
                     Some(screen_size.to_i32_round()),
                     Kind::Unspecified,
                 );
-                let glitch = GlitchWindowElement::new(
+                let tv = TvWindowElement::new(
                     texture,
                     shader.clone(),
                     self.progress as f32,
                     false,
                     self.duration.as_secs_f32(),
                     (size_phys.w as f32, size_phys.h as f32),
-                    (0.392, 0.627, 1.0, 1.0),
-                    self.seed.0,
-                    1.0,
-                    2.0,
-                    2.0,
+                    (1.0, 1.0, 1.0, 1.0),
                 );
-                return Some(OutputRenderElements::GlitchClosingWindow(
+                return Some(OutputRenderElements::TvClosingWindow(
                     WindowTransformElement::new(
-                        glitch,
+                        tv,
+                        center,
+                        Point::default(),
+                        Scale::from(1.0),
+                    ),
+                ));
+            }
+        } else if self.effect == WindowEffect::Doom {
+            if let Some(shader) = shaders.doom {
+                let texture = TextureRenderElement::from_texture_buffer(
+                    loc_phys,
+                    &self.buffer,
+                    Some(1.0),
+                    Some(super::texel_src(self.texels)),
+                    Some(screen_size.to_i32_round()),
+                    Kind::Unspecified,
+                );
+                let doom = DoomWindowElement::new(
+                    texture,
+                    shader.clone(),
+                    self.progress as f32,
+                    false,
+                    self.duration.as_secs_f32(),
+                    (size_phys.w as f32, size_phys.h as f32),
+                    2.0,
+                    3.0,
+                    4.0,
+                );
+                return Some(OutputRenderElements::DoomClosingWindow(
+                    WindowTransformElement::new(
+                        doom,
                         center,
                         Point::default(),
                         Scale::from(1.0),
