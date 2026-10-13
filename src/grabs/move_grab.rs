@@ -536,7 +536,7 @@ impl MoveGrab {
             .0
             .to_i32_round();
         data.map_window(element.clone(), canvas, false);
-        data.update_wobbly_animation(element, canvas, location);
+        data.update_wobbly_animation(element, canvas, location, false, false);
         if self.last_mapped_loc != Some(canvas) {
             data.render.blur_geometry_generation += 1;
             self.last_mapped_loc = Some(canvas);
@@ -596,7 +596,9 @@ impl MoveGrab {
             crate::grabs::drag_map_window(data, member, member_pos);
         }
         crate::grabs::drag_map_window(data, element.clone(), new_loc);
-        data.update_wobbly_animation(element, new_loc, location);
+        let snapped_x = self.snap.x.is_some();
+        let snapped_y = self.snap.y.is_some();
+        data.update_wobbly_animation(element, new_loc, location, snapped_x, snapped_y);
 
         // Sub-pixel motion that resolves to the same integer canvas position
         // doesn't actually shift the window, so blurred neighbours don't need

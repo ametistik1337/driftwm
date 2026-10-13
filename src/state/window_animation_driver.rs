@@ -210,6 +210,8 @@ impl DriftWm {
         element: &StageWindow,
         new_loc: Point<i32, Logical>,
         cursor: Point<f64, Logical>,
+        snapped_x: bool,
+        snapped_y: bool,
     ) {
         if !self.config.effects.wobbly_windows {
             return;
@@ -219,7 +221,7 @@ impl DriftWm {
         };
         let size = driftwm::stage::StageElement::size(element);
         let rect = Rectangle::new(new_loc.to_f64(), size.to_f64());
-        self.window_animations.update_wobbly(id, rect, cursor);
+        self.window_animations.update_wobbly(id, rect, cursor, snapped_x, snapped_y);
     }
 
     pub(crate) fn release_wobbly_animation(&mut self, element: &StageWindow) {

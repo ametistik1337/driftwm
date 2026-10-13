@@ -523,18 +523,21 @@ impl WindowAnimations {
         );
     }
 
-    /// Update target rect and cursor position for a wobbly dragged window.
+    /// Update target rect and cursor position for a wobbly dragged window,
+    /// passing magnetic snap status along both axes.
     pub fn update_wobbly(
         &mut self,
         id: ElementId,
         new_rect: Rectangle<f64, Logical>,
         cursor: Point<f64, Logical>,
+        snapped_x: bool,
+        snapped_y: bool,
     ) {
         if let Some(WindowAnimation {
             kind: AnimationKind::Wobbly(wobbly),
         }) = self.animations.get_mut(&id)
         {
-            wobbly.on_move(new_rect, cursor);
+            wobbly.on_move(new_rect, cursor, snapped_x, snapped_y);
         }
     }
 

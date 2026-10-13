@@ -36,6 +36,10 @@ pub struct WobblyState {
     pub is_dragging: bool,
     /// Damping threshold below which motion is considered settled.
     pub settled: bool,
+    /// Whether the window is magnetically snapped along the X axis.
+    pub snapped_x: bool,
+    /// Whether the window is magnetically snapped along the Y axis.
+    pub snapped_y: bool,
 }
 
 impl WobblyState {
@@ -70,15 +74,26 @@ impl WobblyState {
             grab_point,
             is_dragging: true,
             settled: false,
+            snapped_x: false,
+            snapped_y: false,
         }
     }
 
-    /// Update target window rect and cursor position during interactive drag.
-    pub fn on_move(&mut self, new_rect: Rectangle<f64, Logical>, cursor: Point<f64, Logical>) {
+    /// Update target window rect and cursor position during interactive drag,
+    /// with optional magnetic snap status on X and Y axes.
+    pub fn on_move(
+        &mut self,
+        new_rect: Rectangle<f64, Logical>,
+        cursor: Point<f64, Logical>,
+        snapped_x: bool,
+        snapped_y: bool,
+    ) {
         self.target_rect = new_rect;
         self.grab_point = cursor;
         self.is_dragging = true;
         self.settled = false;
+        self.snapped_x = snapped_x;
+        self.snapped_y = snapped_y;
 
         let w = new_rect.size.w.max(1.0);
         let h = new_rect.size.h.max(1.0);
@@ -90,11 +105,19 @@ impl WobblyState {
                 let idx = j * Self::GRID_SIZE + i;
                 let target = Point::from((new_rect.loc.x + (i as f64) * dx, new_rect.loc.y + (j as f64) * dy));
                 self.points[idx].target = target;
-                if self.points[idx].constraint {
-                    // Pinned vertex is attached to the cursor.
-                    self.points[idx].target = cursor;
-                    self.points[idx].pos = cursor;
-                }
+            }
+        }
+
+        // If snapped along an axis, damp velocities along that axis so the window
+        // cleanly sticks to the magnetic border without lingering oscillation.
+        if snapped_x {
+            for pt in &mut self.points {
+                pt.vel.x *= 0.5;
+            }
+        }
+        if snapped_y {
+            for pt in &mut self.points {
+                pt.vel.y *= 0.5;
             }
         }
     }
@@ -102,6 +125,8 @@ impl WobblyState {
     /// Release the grab constraint when mouse button or touch lifts.
     pub fn on_release(&mut self) {
         self.is_dragging = false;
+        self.snapped_x = false;
+        self.snapped_y = false;
         let w = self.target_rect.size.w.max(1.0);
         let h = self.target_rect.size.h.max(1.0);
         let dx = w / 3.0;
@@ -143,12 +168,6 @@ impl WobblyState {
         for j in 0..Self::GRID_SIZE {
             for i in 0..Self::GRID_SIZE {
                 let idx = j * Self::GRID_SIZE + i;
-                if self.points[idx].constraint {
-                    self.points[idx].acc = Point::from((0.0, 0.0));
-                    self.points[idx].vel = Point::from((0.0, 0.0));
-                    continue;
-                }
-
                 let pos = self.points[idx].pos;
                 let mut force_x = 0.0;
                 let mut force_y = 0.0;
@@ -185,8 +204,13 @@ impl WobblyState {
 
                 // Restorative pull towards ideal home target.
                 let home = self.points[idx].target;
-                force_x += (home.x - pos.x) * stiffness;
-                force_y += (home.y - pos.y) * stiffness;
+                let home_stiffness = if self.points[idx].constraint {
+                    stiffness * 2.5
+                } else {
+                    stiffness
+                };
+                force_x += (home.x - pos.x) * home_stiffness;
+                force_y += (home.y - pos.y) * home_stiffness;
                 neighbor_count += 1.0;
 
                 if neighbor_count > 0.0 {
@@ -203,12 +227,18 @@ impl WobblyState {
         let mut max_disp: f64 = 0.0;
 
         for pt in &mut self.points {
-            if pt.constraint {
-                continue;
-            }
             let acc = pt.acc;
-            pt.vel.x = acc.x * (dt * 60.0) + pt.vel.x * drag;
-            pt.vel.y = acc.y * (dt * 60.0) + pt.vel.y * drag;
+            let mut drag_x = drag;
+            let mut drag_y = drag;
+            if self.snapped_x {
+                drag_x *= 0.6;
+            }
+            if self.snapped_y {
+                drag_y *= 0.6;
+            }
+
+            pt.vel.x = acc.x * (dt * 60.0) + pt.vel.x * drag_x;
+            pt.vel.y = acc.y * (dt * 60.0) + pt.vel.y * drag_y;
 
             // Cap velocities to prevent runaway explosion.
             let v_cap = 1500.0;
@@ -272,7 +302,16 @@ impl WobblyState {
 
         let w = avg_w.max(20.0);
         let h = avg_h.max(20.0);
-        let loc = Point::from((center_x - w / 2.0, center_y - h / 2.0));
+        let mut loc = Point::from((center_x - w / 2.0, center_y - h / 2.0));
+
+        // When magnetically snapped, firmly anchor the snapped axis to the target
+        // placement while allowing the window body to settle with elastic bounce.
+        if self.snapped_x {
+            loc.x = self.target_rect.loc.x;
+        }
+        if self.snapped_y {
+            loc.y = self.target_rect.loc.y;
+        }
 
         Rectangle::new(loc, Size::from((w, h)))
     }
@@ -306,7 +345,7 @@ mod tests {
         // Move window to new position
         let rect2 = Rectangle::new(Point::from((200.0, 200.0)), Size::from((300.0, 300.0)));
         let grab2 = Point::from((250.0, 250.0));
-        wobbly.on_move(rect2, grab2);
+        wobbly.on_move(rect2, grab2, false, false);
 
         // Advance simulation for 5 frames while dragging
         for _ in 0..5 {
@@ -332,6 +371,28 @@ mod tests {
     }
 
     #[test]
+    fn wobbly_magnetic_snapping_anchors_axis() {
+        let rect1 = Rectangle::new(Point::from((100.0, 100.0)), Size::from((300.0, 300.0)));
+        let grab1 = Point::from((150.0, 150.0));
+        let mut wobbly = WobblyState::new(rect1, grab1);
+
+        // Window snapped along X (e.g. docked to left neighbor at x = 500)
+        let rect2 = Rectangle::new(Point::from((500.0, 200.0)), Size::from((300.0, 300.0)));
+        // Cursor pulled 20px further right before breaking snap
+        let grab2 = Point::from((570.0, 250.0));
+        wobbly.on_move(rect2, grab2, true, false);
+
+        // Advance several physics frames
+        for _ in 0..10 {
+            wobbly.step(0.016, 0.15, 0.85, 0.10);
+        }
+
+        let vr = wobbly.visual_rect();
+        // Snapped X axis must remain firmly anchored to target_rect.loc.x
+        assert_eq!(vr.loc.x, 500.0, "Snapped axis must not drift with cursor");
+    }
+
+    #[test]
     fn wobbly_window_animations_lifecycle() {
         use crate::state::window_animation::{AnimSpace, WindowAnimations};
         let mut anims = WindowAnimations::default();
@@ -351,7 +412,7 @@ mod tests {
         // Update movement
         let new_rect = Rectangle::new(Point::from((150.0, 150.0)), Size::from((400.0, 300.0)));
         let new_cursor = Point::from((200.0, 180.0));
-        anims.update_wobbly(id, new_rect, new_cursor);
+        anims.update_wobbly(id, new_rect, new_cursor, false, false);
 
         // Tick several times to advance physics simulation
         let now = std::time::Instant::now();
