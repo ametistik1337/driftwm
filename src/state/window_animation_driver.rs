@@ -598,7 +598,10 @@ impl DriftWm {
     /// primary plane, which is the same one-element rule `clear_color_for`
     /// records. That is the trade the rule buys, opted into per window.
     pub(crate) fn fullscreen_conceals_canvas(&self, output: &Output) -> bool {
-        if self.config.background.pause_on_fullscreen && self.is_output_visually_fullscreen(output) {
+        let has_fullscreen_entry = self.stage.fullscreen_on(&output.name()).is_some();
+        if self.config.background.pause_on_fullscreen
+            && (has_fullscreen_entry || self.is_output_visually_fullscreen(output))
+        {
             return true;
         }
         self.is_output_visually_fullscreen(output)

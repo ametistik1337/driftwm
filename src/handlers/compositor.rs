@@ -802,10 +802,28 @@ impl CompositorHandler for DriftWm {
                             self.decorations
                                 .insert(DecorationKey::Surface(root.id()), deco);
                         }
-                        if adopted_sid.is_none()
-                            && !hidden_for_adopt
-                            && applied.as_ref().is_some_and(|a| a.fullscreen == Some(true))
-                        {
+                        let is_game = {
+                            let app_lower = app_id.as_deref().unwrap_or("").to_lowercase();
+                            let title_lower = title.as_deref().unwrap_or("").to_lowercase();
+                            app_lower.starts_with("dota")
+                                || app_lower.starts_with("steam_app_")
+                                || app_lower == "cs2"
+                                || app_lower == "csgo"
+                                || app_lower.starts_with("hl2")
+                                || app_lower == "gamescope"
+                                || app_lower.contains("minecraft")
+                                || app_lower.contains("prismlauncher")
+                                || title_lower.contains("dota")
+                                || title_lower.contains("minecraft")
+                                || title_lower.contains("counter-strike")
+                        };
+                        let auto_fs = applied.as_ref().and_then(|a| a.fullscreen).unwrap_or(is_game);
+                        if adopted_sid.is_none() && !hidden_for_adopt && auto_fs {
+                            tracing::info!(
+                                "Auto-fullscreen scheduled for window: app_id={:?}, title={:?}",
+                                app_id,
+                                title
+                            );
                             self.pending_fullscreen.entry(root.clone()).or_insert(None);
                         }
 

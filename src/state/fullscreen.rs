@@ -189,6 +189,13 @@ impl DriftWm {
 
         self.stage
             .set_fullscreen(&output.name(), window.clone(), saved_location, saved_size);
+        tracing::info!(
+            "Entering fullscreen: output={}, window_title={:?}, app_id={:?}, pause_on_fullscreen={}",
+            output.name(),
+            window.window_title(),
+            window.app_id_or_class(),
+            self.config.background.pause_on_fullscreen
+        );
         if window.geometry().size != viewport_size {
             self.stage
                 .set_fullscreen_awaiting_size(&output.name(), Some(window.geometry().size));
@@ -381,6 +388,12 @@ impl DriftWm {
         let (Some(ret), Some(entry)) = (ret, entry) else {
             return;
         };
+        tracing::info!(
+            "Exiting fullscreen: output={}, window_title={:?}, app_id={:?}",
+            output.name(),
+            entry.window.window_title(),
+            entry.window.app_id_or_class()
+        );
 
         // Capture the currently presented rect before the stage/camera change,
         // so reversing a still-running entry starts from the visual rather than
