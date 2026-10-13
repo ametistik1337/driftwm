@@ -24,8 +24,8 @@ use driftwm::config::WindowEffect;
 use crate::state::SuspendedWindow;
 
 use super::{
-    OutputRenderElements, PortalWindowElement, TrimmedElement, WindowRenderAnimation,
-    WindowTransformElement, painted_rect, shaders,
+    FireWindowElement, GlitchWindowElement, OutputRenderElements, PortalWindowElement,
+    TrimmedElement, WindowRenderAnimation, WindowTransformElement, painted_rect, shaders,
 };
 
 /// A progress-based effect ends when within this of 1.0 (a 1% alpha residue is
@@ -445,7 +445,7 @@ fn random_portal_seed() -> (f32, f32) {
 
 impl ClosingSnapshot {
     pub fn tick(&mut self, frame_factor: f64) {
-        if self.effect == WindowEffect::Portal {
+        if self.effect != WindowEffect::Default {
             let elapsed = self.started_at.elapsed();
             self.progress = (elapsed.as_secs_f64() / self.duration.as_secs_f64()).clamp(0.0, 1.0);
         } else {
@@ -454,7 +454,7 @@ impl ClosingSnapshot {
     }
 
     pub fn is_done(&self) -> bool {
-        if self.effect == WindowEffect::Portal {
+        if self.effect != WindowEffect::Default {
             self.progress >= 1.0
         } else {
             1.0 - self.progress <= DONE_EPSILON
@@ -739,6 +739,15 @@ fn flatten(
     Some((buffer, bounds, phys_size))
 }
 
+fn effect_duration(effect: WindowEffect) -> Duration {
+    match effect {
+        WindowEffect::Portal => Duration::from_millis(1250),
+        WindowEffect::Fire => Duration::from_millis(1200),
+        WindowEffect::Glitch => Duration::from_millis(750),
+        WindowEffect::Default => Duration::from_millis(300),
+    }
+}
+
 /// Build a closing snapshot for a normal (canvas) window from captured pixels.
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn snapshot_canvas(
@@ -763,7 +772,7 @@ pub(crate) fn snapshot_canvas(
         progress: 0.0,
         effect,
         started_at: Instant::now(),
-        duration: Duration::from_millis(1250),
+        duration: effect_duration(effect),
         seed: random_portal_seed(),
     })
 }
@@ -798,9 +807,16 @@ pub(crate) fn snapshot_screen(
         progress: 0.0,
         effect,
         started_at: Instant::now(),
-        duration: Duration::from_millis(1250),
+        duration: effect_duration(effect),
         seed: random_portal_seed(),
     })
+}
+
+#[derive(Clone, Copy, Default, Debug)]
+pub struct WindowEffectShaders<'a> {
+    pub portal: Option<&'a GlesTexProgram>,
+    pub fire: Option<&'a GlesTexProgram>,
+    pub glitch: Option<&'a GlesTexProgram>,
 }
 
 impl ClosingSnapshot {
@@ -812,7 +828,7 @@ impl ClosingSnapshot {
         camera: Point<f64, Logical>,
         zoom: f64,
         output_scale: f64,
-        portal_shader: Option<&GlesTexProgram>,
+        shaders: WindowEffectShaders<'_>,
     ) -> Option<OutputRenderElements> {
         let (screen_loc, screen_size): (Point<f64, Logical>, Size<f64, Logical>) =
             if let Some((pin_output, screen_rect)) = &self.pinned {
@@ -843,7 +859,7 @@ impl ClosingSnapshot {
         ));
 
         if self.effect == WindowEffect::Portal {
-            if let Some(shader) = portal_shader {
+            if let Some(shader) = shaders.portal {
                 let texture = TextureRenderElement::from_texture_buffer(
                     loc_phys,
                     &self.buffer,
@@ -868,6 +884,73 @@ impl ClosingSnapshot {
                 return Some(OutputRenderElements::PortalClosingWindow(
                     WindowTransformElement::new(
                         portal,
+                        center,
+                        Point::default(),
+                        Scale::from(1.0),
+                    ),
+                ));
+            }
+        } else if self.effect == WindowEffect::Fire {
+            if let Some(shader) = shaders.fire {
+                let texture = TextureRenderElement::from_texture_buffer(
+                    loc_phys,
+                    &self.buffer,
+                    Some(1.0),
+                    Some(super::texel_src(self.texels)),
+                    Some(screen_size.to_i32_round()),
+                    Kind::Unspecified,
+                );
+                let fire = FireWindowElement::new(
+                    texture,
+                    shader.clone(),
+                    self.progress as f32,
+                    false,
+                    self.duration.as_secs_f32(),
+                    (size_phys.w as f32, size_phys.h as f32),
+                    1.0,
+                    0.5,
+                    (0.298, 0.200, 0.098, 0.0),
+                    (0.706, 0.216, 0.118, 0.7),
+                    (1.0, 0.298, 0.149, 0.9),
+                    (1.0, 0.651, 0.098, 1.0),
+                    (1.0, 1.0, 1.0, 1.0),
+                    false,
+                );
+                return Some(OutputRenderElements::FireClosingWindow(
+                    WindowTransformElement::new(
+                        fire,
+                        center,
+                        Point::default(),
+                        Scale::from(1.0),
+                    ),
+                ));
+            }
+        } else if self.effect == WindowEffect::Glitch {
+            if let Some(shader) = shaders.glitch {
+                let texture = TextureRenderElement::from_texture_buffer(
+                    loc_phys,
+                    &self.buffer,
+                    Some(1.0),
+                    Some(super::texel_src(self.texels)),
+                    Some(screen_size.to_i32_round()),
+                    Kind::Unspecified,
+                );
+                let glitch = GlitchWindowElement::new(
+                    texture,
+                    shader.clone(),
+                    self.progress as f32,
+                    false,
+                    self.duration.as_secs_f32(),
+                    (size_phys.w as f32, size_phys.h as f32),
+                    (0.392, 0.627, 1.0, 1.0),
+                    self.seed.0,
+                    1.0,
+                    2.0,
+                    2.0,
+                );
+                return Some(OutputRenderElements::GlitchClosingWindow(
+                    WindowTransformElement::new(
+                        glitch,
                         center,
                         Point::default(),
                         Scale::from(1.0),
@@ -910,7 +993,7 @@ pub(crate) fn render_snapshots_for_output(
     camera: Point<f64, Logical>,
     zoom: f64,
     output_scale: f64,
-    portal_shader: Option<&GlesTexProgram>,
+    shaders: WindowEffectShaders<'_>,
 ) -> Vec<OutputRenderElements> {
     snapshots
         .iter()
@@ -920,7 +1003,7 @@ pub(crate) fn render_snapshots_for_output(
                 |(o, _)| o == output_name,
             )
         })
-        .filter_map(|s| s.render_element(output_name, camera, zoom, output_scale, portal_shader))
+        .filter_map(|s| s.render_element(output_name, camera, zoom, output_scale, shaders))
         .collect()
 }
 

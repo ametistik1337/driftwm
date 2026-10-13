@@ -754,6 +754,121 @@ pub fn compile_portal_shader(renderer: &mut GlesRenderer) -> Option<GlesTexProgr
     }
 }
 
+const WINDOW_FIRE_SRC: &str = include_str!("../shaders/window_fire.glsl");
+
+pub const WINDOW_FIRE_UNIFORMS: &[UniformName<'static>] = &[
+    UniformName {
+        name: Cow::Borrowed("u_progress"),
+        type_: UniformType::_1f,
+    },
+    UniformName {
+        name: Cow::Borrowed("u_for_opening"),
+        type_: UniformType::_1f,
+    },
+    UniformName {
+        name: Cow::Borrowed("u_duration"),
+        type_: UniformType::_1f,
+    },
+    UniformName {
+        name: Cow::Borrowed("u_size"),
+        type_: UniformType::_2f,
+    },
+    UniformName {
+        name: Cow::Borrowed("u_scale"),
+        type_: UniformType::_1f,
+    },
+    UniformName {
+        name: Cow::Borrowed("u_movement_speed"),
+        type_: UniformType::_1f,
+    },
+    UniformName {
+        name: Cow::Borrowed("u_gradient1"),
+        type_: UniformType::_4f,
+    },
+    UniformName {
+        name: Cow::Borrowed("u_gradient2"),
+        type_: UniformType::_4f,
+    },
+    UniformName {
+        name: Cow::Borrowed("u_gradient3"),
+        type_: UniformType::_4f,
+    },
+    UniformName {
+        name: Cow::Borrowed("u_gradient4"),
+        type_: UniformType::_4f,
+    },
+    UniformName {
+        name: Cow::Borrowed("u_gradient5"),
+        type_: UniformType::_4f,
+    },
+    UniformName {
+        name: Cow::Borrowed("u_closing_bottom_to_top"),
+        type_: UniformType::_1f,
+    },
+];
+
+pub fn compile_fire_shader(renderer: &mut GlesRenderer) -> Option<GlesTexProgram> {
+    match renderer.compile_custom_texture_shader(WINDOW_FIRE_SRC, WINDOW_FIRE_UNIFORMS) {
+        Ok(shader) => Some(shader),
+        Err(e) => {
+            tracing::error!("Failed to compile fire shader: {e}");
+            None
+        }
+    }
+}
+
+const WINDOW_GLITCH_SRC: &str = include_str!("../shaders/window_glitch.glsl");
+
+pub const WINDOW_GLITCH_UNIFORMS: &[UniformName<'static>] = &[
+    UniformName {
+        name: Cow::Borrowed("u_progress"),
+        type_: UniformType::_1f,
+    },
+    UniformName {
+        name: Cow::Borrowed("u_for_opening"),
+        type_: UniformType::_1f,
+    },
+    UniformName {
+        name: Cow::Borrowed("u_duration"),
+        type_: UniformType::_1f,
+    },
+    UniformName {
+        name: Cow::Borrowed("u_size"),
+        type_: UniformType::_2f,
+    },
+    UniformName {
+        name: Cow::Borrowed("u_color"),
+        type_: UniformType::_4f,
+    },
+    UniformName {
+        name: Cow::Borrowed("u_seed"),
+        type_: UniformType::_1f,
+    },
+    UniformName {
+        name: Cow::Borrowed("u_scale"),
+        type_: UniformType::_1f,
+    },
+    UniformName {
+        name: Cow::Borrowed("u_strength"),
+        type_: UniformType::_1f,
+    },
+    UniformName {
+        name: Cow::Borrowed("u_speed"),
+        type_: UniformType::_1f,
+    },
+];
+
+pub fn compile_glitch_shader(renderer: &mut GlesRenderer) -> Option<GlesTexProgram> {
+    match renderer.compile_custom_texture_shader(WINDOW_GLITCH_SRC, WINDOW_GLITCH_UNIFORMS) {
+        Ok(shader) => Some(shader),
+        Err(e) => {
+            tracing::error!("Failed to compile glitch shader: {e}");
+            None
+        }
+    }
+}
+
+
 #[cfg(test)]
 mod tests {
     use super::*;

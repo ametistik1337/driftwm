@@ -63,6 +63,10 @@ pub fn init_winit(
             crate::render::compile_corner_clip_shader(backend.renderer());
         data.render.portal_shader =
             crate::render::compile_portal_shader(backend.renderer());
+        data.render.fire_shader =
+            crate::render::compile_fire_shader(backend.renderer());
+        data.render.glitch_shader =
+            crate::render::compile_glitch_shader(backend.renderer());
         let (blur_down, blur_up, blur_mask) =
             crate::render::compile_blur_shaders(backend.renderer());
         data.render.blur_down_shader = blur_down;

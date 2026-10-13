@@ -513,6 +513,8 @@ pub(super) fn parse_effects_config(raw: EffectsFileConfig, errors: &mut Warnings
     }
     let window_effect = match raw.window_effect.as_deref() {
         Some("portal") => WindowEffect::Portal,
+        Some("fire") => WindowEffect::Fire,
+        Some("glitch") => WindowEffect::Glitch,
         Some("default") | None => WindowEffect::Default,
         Some(unknown) => {
             collect_warn(

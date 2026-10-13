@@ -23,13 +23,14 @@ pub use blur::{BlurCache, BlurScratchPool, SharedBlur};
 pub use capture::{render_capture_frames, render_screencopy, render_toplevel_captures};
 pub(crate) use closing::{
     BakeChrome, CloseChrome, ClosePixels, ClosingSnapshot, ResizeCaptures, ResizeCrossfade,
-    StandInFade, capture_close_pixels, close_pixels_fresh, resize_crossfade, snapshot_canvas,
-    snapshot_screen,
+    StandInFade, capture_close_pixels, close_pixels_fresh, resize_crossfade,
+    snapshot_canvas, snapshot_screen,
 };
 pub use cursor::build_cursor_elements;
 pub use elements::{
-    OutputRenderElements, PixelSnapRescaleElement, PortalWindowElement, RoundedCornerElement,
-    TileShaderElement, TrimmedElement, WindowTransformElement, painted_rect, painted_size,
+    FireWindowElement, GlitchWindowElement, OutputRenderElements, PixelSnapRescaleElement,
+    PortalWindowElement, RoundedCornerElement, TileShaderElement, TrimmedElement,
+    WindowTransformElement, painted_rect, painted_size,
 };
 pub use error_bar::ErrorBarCache;
 pub use lifecycle::{
@@ -40,7 +41,7 @@ pub use screenshot::capture_region_to_png;
 pub use shader_chunks::ShaderChunkCache;
 pub use shaders::{
     BorderPhysKey, ShadowPhysKey, compile_border_shader, compile_corner_clip_shader,
-    compile_portal_shader, compile_shadow_shader,
+    compile_fire_shader, compile_glitch_shader, compile_portal_shader, compile_shadow_shader,
 };
 pub use tile_chunks::BgChunkCache;
 
@@ -1635,7 +1636,11 @@ pub fn compose_frame(
             camera,
             zoom,
             output_scale,
-            state.render.portal_shader.as_ref(),
+            closing::WindowEffectShaders {
+                portal: state.render.portal_shader.as_ref(),
+                fire: state.render.fire_shader.as_ref(),
+                glitch: state.render.glitch_shader.as_ref(),
+            },
         );
         // Collected before the per-fade mutable borrows of `state` below.
         // `focused`/`launching` are the values frozen at fade creation, never a

@@ -1042,6 +1042,8 @@ pub enum WindowEffect {
     #[default]
     Default,
     Portal,
+    Fire,
+    Glitch,
 }
 
 #[derive(Clone, Debug, PartialEq)]

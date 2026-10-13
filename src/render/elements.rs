@@ -620,6 +620,8 @@ render_elements! {
     AnimatedChrome=WindowTransformElement<RescaleRenderElement<PixelShaderElement>>,
     ClosingWindow=WindowTransformElement<TextureRenderElement<GlesTexture>>,
     PortalClosingWindow=WindowTransformElement<PortalWindowElement>,
+    FireClosingWindow=WindowTransformElement<FireWindowElement>,
+    GlitchClosingWindow=WindowTransformElement<GlitchWindowElement>,
     Layer=WaylandSurfaceRenderElement<GlesRenderer>,
     Cursor=MemoryRenderBufferRenderElement<GlesRenderer>,
     CursorSurface=smithay::backend::renderer::element::Wrap<WaylandSurfaceRenderElement<GlesRenderer>>,
@@ -1032,6 +1034,283 @@ impl RenderElement<GlesRenderer> for PortalWindowElement {
         self.inner.underlying_storage(renderer)
     }
 }
+
+/// Render element that applies the animated Burn My Windows fire shader to a window texture.
+#[derive(Debug)]
+pub struct FireWindowElement {
+    inner: TextureRenderElement<GlesTexture>,
+    shader: GlesTexProgram,
+    progress: f32,
+    for_opening: bool,
+    duration: f32,
+    size: (f32, f32),
+    scale: f32,
+    movement_speed: f32,
+    gradient1: (f32, f32, f32, f32),
+    gradient2: (f32, f32, f32, f32),
+    gradient3: (f32, f32, f32, f32),
+    gradient4: (f32, f32, f32, f32),
+    gradient5: (f32, f32, f32, f32),
+    closing_bottom_to_top: bool,
+}
+
+impl FireWindowElement {
+    #[allow(clippy::too_many_arguments)]
+    pub fn new(
+        inner: TextureRenderElement<GlesTexture>,
+        shader: GlesTexProgram,
+        progress: f32,
+        for_opening: bool,
+        duration: f32,
+        size: (f32, f32),
+        scale: f32,
+        movement_speed: f32,
+        gradient1: (f32, f32, f32, f32),
+        gradient2: (f32, f32, f32, f32),
+        gradient3: (f32, f32, f32, f32),
+        gradient4: (f32, f32, f32, f32),
+        gradient5: (f32, f32, f32, f32),
+        closing_bottom_to_top: bool,
+    ) -> Self {
+        Self {
+            inner,
+            shader,
+            progress,
+            for_opening,
+            duration,
+            size,
+            scale,
+            movement_speed,
+            gradient1,
+            gradient2,
+            gradient3,
+            gradient4,
+            gradient5,
+            closing_bottom_to_top,
+        }
+    }
+
+    fn compute_uniforms(&self) -> Vec<Uniform<'static>> {
+        vec![
+            Uniform::new("u_progress", self.progress),
+            Uniform::new("u_for_opening", if self.for_opening { 1.0f32 } else { 0.0f32 }),
+            Uniform::new("u_duration", self.duration),
+            Uniform::new("u_size", self.size),
+            Uniform::new("u_scale", self.scale),
+            Uniform::new("u_movement_speed", self.movement_speed),
+            Uniform::new("u_gradient1", self.gradient1),
+            Uniform::new("u_gradient2", self.gradient2),
+            Uniform::new("u_gradient3", self.gradient3),
+            Uniform::new("u_gradient4", self.gradient4),
+            Uniform::new("u_gradient5", self.gradient5),
+            Uniform::new("u_closing_bottom_to_top", if self.closing_bottom_to_top { 1.0f32 } else { 0.0f32 }),
+        ]
+    }
+}
+
+impl Element for FireWindowElement {
+    fn id(&self) -> &Id {
+        self.inner.id()
+    }
+
+    fn current_commit(&self) -> CommitCounter {
+        self.inner.current_commit()
+    }
+
+    fn src(&self) -> Rectangle<f64, smithay::utils::Buffer> {
+        self.inner.src()
+    }
+
+    fn transform(&self) -> Transform {
+        self.inner.transform()
+    }
+
+    fn geometry(&self, scale: Scale<f64>) -> Rectangle<i32, Physical> {
+        self.inner.geometry(scale)
+    }
+
+    fn damage_since(
+        &self,
+        scale: Scale<f64>,
+        commit: Option<CommitCounter>,
+    ) -> DamageSet<i32, Physical> {
+        self.inner.damage_since(scale, commit)
+    }
+
+    fn opaque_regions(&self, _scale: Scale<f64>) -> OpaqueRegions<i32, Physical> {
+        OpaqueRegions::default()
+    }
+
+    fn alpha(&self) -> f32 {
+        self.inner.alpha()
+    }
+
+    fn kind(&self) -> Kind {
+        self.inner.kind()
+    }
+}
+
+impl RenderElement<GlesRenderer> for FireWindowElement {
+    fn draw(
+        &self,
+        frame: &mut GlesFrame<'_, '_>,
+        src: Rectangle<f64, smithay::utils::Buffer>,
+        dst: Rectangle<i32, Physical>,
+        damage: &[Rectangle<i32, Physical>],
+        opaque_regions: &[Rectangle<i32, Physical>],
+        user_data: Option<&smithay::utils::user_data::UserDataMap>,
+    ) -> Result<(), GlesError> {
+        frame.override_default_tex_program(self.shader.clone(), self.compute_uniforms());
+        let result = <TextureRenderElement<GlesTexture> as RenderElement<GlesRenderer>>::draw(
+            &self.inner,
+            frame,
+            src,
+            dst,
+            damage,
+            opaque_regions,
+            user_data,
+        );
+        frame.clear_tex_program_override();
+        result
+    }
+
+    fn underlying_storage(&self, renderer: &mut GlesRenderer) -> Option<UnderlyingStorage<'_>> {
+        self.inner.underlying_storage(renderer)
+    }
+}
+
+/// Render element that applies the animated Burn My Windows Cyberpunk Glitch shader to a window texture.
+#[derive(Debug)]
+pub struct GlitchWindowElement {
+    inner: TextureRenderElement<GlesTexture>,
+    shader: GlesTexProgram,
+    progress: f32,
+    for_opening: bool,
+    duration: f32,
+    size: (f32, f32),
+    color: (f32, f32, f32, f32),
+    seed: f32,
+    scale: f32,
+    strength: f32,
+    speed: f32,
+}
+
+impl GlitchWindowElement {
+    #[allow(clippy::too_many_arguments)]
+    pub fn new(
+        inner: TextureRenderElement<GlesTexture>,
+        shader: GlesTexProgram,
+        progress: f32,
+        for_opening: bool,
+        duration: f32,
+        size: (f32, f32),
+        color: (f32, f32, f32, f32),
+        seed: f32,
+        scale: f32,
+        strength: f32,
+        speed: f32,
+    ) -> Self {
+        Self {
+            inner,
+            shader,
+            progress,
+            for_opening,
+            duration,
+            size,
+            color,
+            seed,
+            scale,
+            strength,
+            speed,
+        }
+    }
+
+    fn compute_uniforms(&self) -> Vec<Uniform<'static>> {
+        vec![
+            Uniform::new("u_progress", self.progress),
+            Uniform::new("u_for_opening", if self.for_opening { 1.0f32 } else { 0.0f32 }),
+            Uniform::new("u_duration", self.duration),
+            Uniform::new("u_size", self.size),
+            Uniform::new("u_color", self.color),
+            Uniform::new("u_seed", self.seed),
+            Uniform::new("u_scale", self.scale),
+            Uniform::new("u_strength", self.strength),
+            Uniform::new("u_speed", self.speed),
+        ]
+    }
+}
+
+impl Element for GlitchWindowElement {
+    fn id(&self) -> &Id {
+        self.inner.id()
+    }
+
+    fn current_commit(&self) -> CommitCounter {
+        self.inner.current_commit()
+    }
+
+    fn src(&self) -> Rectangle<f64, smithay::utils::Buffer> {
+        self.inner.src()
+    }
+
+    fn transform(&self) -> Transform {
+        self.inner.transform()
+    }
+
+    fn geometry(&self, scale: Scale<f64>) -> Rectangle<i32, Physical> {
+        self.inner.geometry(scale)
+    }
+
+    fn damage_since(
+        &self,
+        scale: Scale<f64>,
+        commit: Option<CommitCounter>,
+    ) -> DamageSet<i32, Physical> {
+        self.inner.damage_since(scale, commit)
+    }
+
+    fn opaque_regions(&self, _scale: Scale<f64>) -> OpaqueRegions<i32, Physical> {
+        OpaqueRegions::default()
+    }
+
+    fn alpha(&self) -> f32 {
+        self.inner.alpha()
+    }
+
+    fn kind(&self) -> Kind {
+        self.inner.kind()
+    }
+}
+
+impl RenderElement<GlesRenderer> for GlitchWindowElement {
+    fn draw(
+        &self,
+        frame: &mut GlesFrame<'_, '_>,
+        src: Rectangle<f64, smithay::utils::Buffer>,
+        dst: Rectangle<i32, Physical>,
+        damage: &[Rectangle<i32, Physical>],
+        opaque_regions: &[Rectangle<i32, Physical>],
+        user_data: Option<&smithay::utils::user_data::UserDataMap>,
+    ) -> Result<(), GlesError> {
+        frame.override_default_tex_program(self.shader.clone(), self.compute_uniforms());
+        let result = <TextureRenderElement<GlesTexture> as RenderElement<GlesRenderer>>::draw(
+            &self.inner,
+            frame,
+            src,
+            dst,
+            damage,
+            opaque_regions,
+            user_data,
+        );
+        frame.clear_tex_program_override();
+        result
+    }
+
+    fn underlying_storage(&self, renderer: &mut GlesRenderer) -> Option<UnderlyingStorage<'_>> {
+        self.inner.underlying_storage(renderer)
+    }
+}
+
 
 #[cfg(test)]
 mod tests {

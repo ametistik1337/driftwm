@@ -18,6 +18,8 @@ pub struct RenderCache {
     pub border_shader: Option<GlesPixelProgram>,
     pub corner_clip_shader: Option<GlesTexProgram>,
     pub portal_shader: Option<GlesTexProgram>,
+    pub fire_shader: Option<GlesTexProgram>,
+    pub glitch_shader: Option<GlesTexProgram>,
     pub background_shader: Option<GlesPixelProgram>,
     /// `u_time` is referenced — drives per-frame redraws.
     pub background_is_animated: bool,
@@ -93,6 +95,8 @@ impl RenderCache {
             border_shader: None,
             corner_clip_shader: None,
             portal_shader: None,
+            fire_shader: None,
+            glitch_shader: None,
             background_shader: None,
             background_is_animated: false,
             background_uses_camera: false,

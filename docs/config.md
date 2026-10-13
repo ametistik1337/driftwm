@@ -670,7 +670,7 @@ open/close grow/shrink amplitude (1 = fade only)
 
 Default: `"default"`
 
-window open/close effect: "default" (scale + fade), "portal" (Rick & Morty C-137 portal)
+window open/close effect: "default" (scale + fade), "portal" (Rick & Morty C-137 portal), "fire" (Compiz Fire), "glitch" (Cyberpunk Glitch)
 
 ## `[background]`
 
