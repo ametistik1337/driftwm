@@ -516,6 +516,7 @@ pub(super) fn parse_effects_config(raw: EffectsFileConfig, errors: &mut Warnings
         Some("fire") => WindowEffect::Fire,
         Some("tv") => WindowEffect::Tv,
         Some("doom") => WindowEffect::Doom,
+        Some("anomaly") => WindowEffect::Anomaly,
         Some("default") | None => WindowEffect::Default,
         Some(unknown) => {
             collect_warn(

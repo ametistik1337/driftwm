@@ -24,9 +24,9 @@ use driftwm::config::WindowEffect;
 use crate::state::SuspendedWindow;
 
 use super::{
-    DoomWindowElement, FireWindowElement, OutputRenderElements, PortalWindowElement,
-    TrimmedElement, TvWindowElement, WindowRenderAnimation, WindowTransformElement,
-    painted_rect, shaders,
+    AnomalyWindowElement, DoomWindowElement, FireWindowElement, OutputRenderElements,
+    PortalWindowElement, TrimmedElement, TvWindowElement, WindowRenderAnimation,
+    WindowTransformElement, painted_rect, shaders,
 };
 
 /// A progress-based effect ends when within this of 1.0 (a 1% alpha residue is
@@ -746,6 +746,7 @@ fn effect_duration(effect: WindowEffect) -> Duration {
         WindowEffect::Fire => Duration::from_millis(1200),
         WindowEffect::Tv => Duration::from_millis(400),
         WindowEffect::Doom => Duration::from_millis(700),
+        WindowEffect::Anomaly => Duration::from_millis(750),
         WindowEffect::Default => Duration::from_millis(300),
     }
 }
@@ -820,6 +821,7 @@ pub struct WindowEffectShaders<'a> {
     pub fire: Option<&'a GlesTexProgram>,
     pub tv: Option<&'a GlesTexProgram>,
     pub doom: Option<&'a GlesTexProgram>,
+    pub anomaly: Option<&'a GlesTexProgram>,
 }
 
 impl ClosingSnapshot {
@@ -980,6 +982,33 @@ impl ClosingSnapshot {
                 return Some(OutputRenderElements::DoomClosingWindow(
                     WindowTransformElement::new(
                         doom,
+                        center,
+                        Point::default(),
+                        Scale::from(1.0),
+                    ),
+                ));
+            }
+        } else if self.effect == WindowEffect::Anomaly {
+            if let Some(shader) = shaders.anomaly {
+                let texture = TextureRenderElement::from_texture_buffer(
+                    loc_phys,
+                    &self.buffer,
+                    Some(1.0),
+                    Some(super::texel_src(self.texels)),
+                    Some(screen_size.to_i32_round()),
+                    Kind::Unspecified,
+                );
+                let anomaly = AnomalyWindowElement::new(
+                    texture,
+                    shader.clone(),
+                    self.progress as f32,
+                    false,
+                    self.duration.as_secs_f32(),
+                    (size_phys.w as f32, size_phys.h as f32),
+                );
+                return Some(OutputRenderElements::AnomalyClosingWindow(
+                    WindowTransformElement::new(
+                        anomaly,
                         center,
                         Point::default(),
                         Scale::from(1.0),

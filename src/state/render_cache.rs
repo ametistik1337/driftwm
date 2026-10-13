@@ -21,6 +21,7 @@ pub struct RenderCache {
     pub fire_shader: Option<GlesTexProgram>,
     pub tv_shader: Option<GlesTexProgram>,
     pub doom_shader: Option<GlesTexProgram>,
+    pub anomaly_shader: Option<GlesTexProgram>,
     pub background_shader: Option<GlesPixelProgram>,
     /// `u_time` is referenced — drives per-frame redraws.
     pub background_is_animated: bool,
@@ -99,6 +100,7 @@ impl RenderCache {
             fire_shader: None,
             tv_shader: None,
             doom_shader: None,
+            anomaly_shader: None,
             background_shader: None,
             background_is_animated: false,
             background_uses_camera: false,

@@ -623,6 +623,7 @@ render_elements! {
     FireClosingWindow=WindowTransformElement<FireWindowElement>,
     TvClosingWindow=WindowTransformElement<TvWindowElement>,
     DoomClosingWindow=WindowTransformElement<DoomWindowElement>,
+    AnomalyClosingWindow=WindowTransformElement<AnomalyWindowElement>,
     Layer=WaylandSurfaceRenderElement<GlesRenderer>,
     Cursor=MemoryRenderBufferRenderElement<GlesRenderer>,
     CursorSurface=smithay::backend::renderer::element::Wrap<WaylandSurfaceRenderElement<GlesRenderer>>,
@@ -1390,6 +1391,117 @@ impl Element for DoomWindowElement {
 }
 
 impl RenderElement<GlesRenderer> for DoomWindowElement {
+    fn draw(
+        &self,
+        frame: &mut GlesFrame<'_, '_>,
+        src: Rectangle<f64, smithay::utils::Buffer>,
+        dst: Rectangle<i32, Physical>,
+        damage: &[Rectangle<i32, Physical>],
+        opaque_regions: &[Rectangle<i32, Physical>],
+        user_data: Option<&smithay::utils::user_data::UserDataMap>,
+    ) -> Result<(), GlesError> {
+        frame.override_default_tex_program(self.shader.clone(), self.compute_uniforms());
+        let result = <TextureRenderElement<GlesTexture> as RenderElement<GlesRenderer>>::draw(
+            &self.inner,
+            frame,
+            src,
+            dst,
+            damage,
+            opaque_regions,
+            user_data,
+        );
+        frame.clear_tex_program_override();
+        result
+    }
+
+    fn underlying_storage(&self, renderer: &mut GlesRenderer) -> Option<UnderlyingStorage<'_>> {
+        self.inner.underlying_storage(renderer)
+    }
+}
+
+/// Render element that applies the animated S.T.A.L.K.E.R. 2 anomaly shockwave distortion shader to a window texture.
+#[derive(Debug)]
+pub struct AnomalyWindowElement {
+    inner: TextureRenderElement<GlesTexture>,
+    shader: GlesTexProgram,
+    progress: f32,
+    for_opening: bool,
+    duration: f32,
+    size: (f32, f32),
+}
+
+impl AnomalyWindowElement {
+    pub fn new(
+        inner: TextureRenderElement<GlesTexture>,
+        shader: GlesTexProgram,
+        progress: f32,
+        for_opening: bool,
+        duration: f32,
+        size: (f32, f32),
+    ) -> Self {
+        Self {
+            inner,
+            shader,
+            progress,
+            for_opening,
+            duration,
+            size,
+        }
+    }
+
+    fn compute_uniforms(&self) -> Vec<Uniform<'static>> {
+        vec![
+            Uniform::new("u_progress", self.progress),
+            Uniform::new("u_for_opening", if self.for_opening { 1.0f32 } else { 0.0f32 }),
+            Uniform::new("u_duration", self.duration),
+            Uniform::new("u_size", self.size),
+        ]
+    }
+}
+
+impl Element for AnomalyWindowElement {
+    fn id(&self) -> &Id {
+        self.inner.id()
+    }
+
+    fn current_commit(&self) -> CommitCounter {
+        self.inner.current_commit()
+    }
+
+    fn src(&self) -> Rectangle<f64, smithay::utils::Buffer> {
+        self.inner.src()
+    }
+
+    fn transform(&self) -> Transform {
+        self.inner.transform()
+    }
+
+    fn geometry(&self, scale: Scale<f64>) -> Rectangle<i32, Physical> {
+        self.inner.geometry(scale)
+    }
+
+    fn damage_since(
+        &self,
+        scale: Scale<f64>,
+        commit: Option<CommitCounter>,
+    ) -> DamageSet<i32, Physical> {
+        self.inner.damage_since(scale, commit)
+    }
+
+    fn opaque_regions(&self, _scale: Scale<f64>) -> OpaqueRegions<i32, Physical> {
+        OpaqueRegions::default()
+    }
+
+    fn alpha(&self) -> f32 {
+        self.inner.alpha()
+    }
+
+    fn kind(&self) -> Kind {
+        self.inner.kind()
+    }
+}
+
+impl RenderElement<GlesRenderer> for AnomalyWindowElement {
     fn draw(
         &self,
         frame: &mut GlesFrame<'_, '_>,

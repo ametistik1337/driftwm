@@ -9,9 +9,9 @@ use smithay::utils::{Physical, Point, Scale, Size, Transform};
 
 use super::gl;
 use crate::render::{
-    DoomWindowElement, FireWindowElement, OutputRenderElements, TvWindowElement,
-    WindowTransformElement, compile_doom_shader, compile_fire_shader, compile_tv_shader,
-    render_elements_to_rgba,
+    AnomalyWindowElement, DoomWindowElement, FireWindowElement, OutputRenderElements,
+    TvWindowElement, WindowTransformElement, compile_anomaly_shader, compile_doom_shader,
+    compile_fire_shader, compile_tv_shader, render_elements_to_rgba,
 };
 
 #[test]
@@ -238,4 +238,74 @@ fn doom_shader_renders_accurately() {
         .expect("valid rgba image");
     let out_path = "/tmp/doom_driftwm_test.png";
     img.save(out_path).expect("save rendered doom image");
+}
+
+#[test]
+#[ignore = "needs Mesa surfaceless EGL; run with --include-ignored"]
+fn anomaly_shader_renders_accurately() {
+    let _gl = gl::lock();
+    let Some(mut renderer) = gl::surfaceless_renderer("anomaly_shader_renders_accurately") else {
+        return;
+    };
+
+    let Some(shader) = compile_anomaly_shader(&mut renderer) else {
+        panic!("failed to compile anomaly shader");
+    };
+
+    let width = 200;
+    let height = 200;
+    let phys_size = Size::<i32, Physical>::from((width, height));
+    let buffer_size = smithay::utils::Size::from((width, height));
+
+    let texture = Offscreen::<GlesTexture>::create_buffer(
+        &mut renderer,
+        Fourcc::Abgr8888,
+        buffer_size,
+    )
+    .expect("create offscreen texture");
+
+    let tex_buf = TextureBuffer::from_texture(&mut renderer, texture, 1, Transform::Normal, None);
+    let elem = TextureRenderElement::from_texture_buffer(
+        Point::<f64, Physical>::from((0.0, 0.0)),
+        &tex_buf,
+        Some(1.0),
+        None,
+        Some(smithay::utils::Size::from((width, height))),
+        Kind::Unspecified,
+    );
+
+    let anomaly = AnomalyWindowElement::new(
+        elem,
+        shader,
+        0.5,
+        false,
+        0.75,
+        (width as f32, height as f32),
+    );
+
+    let center = Point::from((width as f64 / 2.0, height as f64 / 2.0));
+    let transform_elem = OutputRenderElements::AnomalyClosingWindow(
+        WindowTransformElement::new(
+            anomaly,
+            center,
+            Point::default(),
+            Scale::from(1.0),
+        ),
+    );
+
+    let refs = [&transform_elem];
+    let bytes = render_elements_to_rgba(
+        &mut renderer,
+        phys_size,
+        Scale::from(1.0),
+        &refs,
+    )
+    .expect("render anomaly elements to rgba");
+
+    assert_eq!(bytes.len(), (width * height * 4) as usize);
+
+    let img = image::RgbaImage::from_raw(width as u32, height as u32, bytes)
+        .expect("valid rgba image");
+    let out_path = "/tmp/anomaly_driftwm_test.png";
+    img.save(out_path).expect("save rendered anomaly image");
 }

@@ -1045,6 +1045,7 @@ pub enum WindowEffect {
     Fire,
     Tv,
     Doom,
+    Anomaly,
 }
 
 #[derive(Clone, Debug, PartialEq)]

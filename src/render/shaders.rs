@@ -895,6 +895,37 @@ pub fn compile_doom_shader(renderer: &mut GlesRenderer) -> Option<GlesTexProgram
     }
 }
 
+const WINDOW_ANOMALY_SRC: &str = include_str!("../shaders/window_anomaly.glsl");
+
+pub const WINDOW_ANOMALY_UNIFORMS: &[UniformName<'static>] = &[
+    UniformName {
+        name: Cow::Borrowed("u_progress"),
+        type_: UniformType::_1f,
+    },
+    UniformName {
+        name: Cow::Borrowed("u_for_opening"),
+        type_: UniformType::_1f,
+    },
+    UniformName {
+        name: Cow::Borrowed("u_duration"),
+        type_: UniformType::_1f,
+    },
+    UniformName {
+        name: Cow::Borrowed("u_size"),
+        type_: UniformType::_2f,
+    },
+];
+
+pub fn compile_anomaly_shader(renderer: &mut GlesRenderer) -> Option<GlesTexProgram> {
+    match renderer.compile_custom_texture_shader(WINDOW_ANOMALY_SRC, WINDOW_ANOMALY_UNIFORMS) {
+        Ok(shader) => Some(shader),
+        Err(e) => {
+            tracing::error!("Failed to compile anomaly shader: {e}");
+            None
+        }
+    }
+}
+
 
 #[cfg(test)]
 mod tests {

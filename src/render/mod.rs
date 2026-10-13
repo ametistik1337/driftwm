@@ -28,9 +28,9 @@ pub(crate) use closing::{
 };
 pub use cursor::build_cursor_elements;
 pub use elements::{
-    DoomWindowElement, FireWindowElement, OutputRenderElements, PixelSnapRescaleElement,
-    PortalWindowElement, RoundedCornerElement, TileShaderElement, TrimmedElement,
-    TvWindowElement, WindowTransformElement, painted_rect, painted_size,
+    AnomalyWindowElement, DoomWindowElement, FireWindowElement, OutputRenderElements,
+    PixelSnapRescaleElement, PortalWindowElement, RoundedCornerElement, TileShaderElement,
+    TrimmedElement, TvWindowElement, WindowTransformElement, painted_rect, painted_size,
 };
 pub use error_bar::ErrorBarCache;
 pub use lifecycle::{
@@ -40,9 +40,9 @@ pub use lifecycle::{
 pub use screenshot::capture_region_to_png;
 pub use shader_chunks::ShaderChunkCache;
 pub use shaders::{
-    BorderPhysKey, ShadowPhysKey, compile_border_shader, compile_corner_clip_shader,
-    compile_doom_shader, compile_fire_shader, compile_portal_shader, compile_shadow_shader,
-    compile_tv_shader,
+    BorderPhysKey, ShadowPhysKey, compile_anomaly_shader, compile_border_shader,
+    compile_corner_clip_shader, compile_doom_shader, compile_fire_shader, compile_portal_shader,
+    compile_shadow_shader, compile_tv_shader,
 };
 pub use tile_chunks::BgChunkCache;
 
@@ -1642,6 +1642,7 @@ pub fn compose_frame(
                 fire: state.render.fire_shader.as_ref(),
                 tv: state.render.tv_shader.as_ref(),
                 doom: state.render.doom_shader.as_ref(),
+                anomaly: state.render.anomaly_shader.as_ref(),
             },
         );
         // Collected before the per-fade mutable borrows of `state` below.
