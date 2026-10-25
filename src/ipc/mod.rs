@@ -12,7 +12,7 @@ use smithay::utils::{Logical, Point, Rectangle, SERIAL_COUNTER, Size};
 use smithay::wayland::seat::WaylandFocus;
 
 use crate::decorations::DecorationKey;
-use crate::state::{DriftWm, NavZoom, StageWindow, SuspendedId};
+use crate::state::{DriftWm, NavZoom, RevealPan, StageWindow, SuspendedId};
 use driftwm::window_ext::WindowExt;
 
 pub mod client;
@@ -193,6 +193,7 @@ pub(crate) fn dispatch(request: Request, state: &mut DriftWm) -> Reply {
         Request::Camera(arg) => cmd_camera(arg, state),
         Request::Zoom(arg) => cmd_zoom(arg, state),
         Request::Layout { short } => cmd_layout(short, state),
+        Request::Cursor => cmd_cursor(state),
         Request::State => Ok(cmd_state(state)),
         Request::DebugCounters => Ok(Response::DebugCounters(state.debug_counters())),
         // Handled in serve_connection, which has the raw stream Subscribe needs.
@@ -252,16 +253,21 @@ fn cmd_camera(arg: Option<(f64, f64)>, state: &mut DriftWm) -> Reply {
                 return Err("camera coordinates must be finite numbers".to_string());
             }
             // Exit before deriving the target below: a fullscreen output
-            // refuses camera moves, and the target is derived from `state.zoom()`,
+            // refuses camera moves, and the target is derived from the zoom,
             // which the park pins at 1.0 until the exit restores it.
             if state.is_fullscreen() {
                 state.exit_fullscreen();
             }
-            // (x, y) is the viewport center, Y-up; map it to the internal camera
-            // target so the viewport ends up centered there.
-            let target =
-                driftwm::canvas::camera_for_center(x, y, state.zoom(), state.get_viewport_size());
-            state.set_camera_target(Some(target));
+            // (x, y) is the viewport center, Y-up. Through the anchor at the
+            // zoom the view is heading to: a flight still under way steers by
+            // its anchor every tick, which would drop a bare camera target.
+            if let Some(output) = state.active_output() {
+                let size = state.get_viewport_size();
+                let center = Point::from((size.w as f64 / 2.0, size.h as f64 / 2.0));
+                let zoom = state.navigation_target_zoom(&output, false);
+                state.user_moved_camera();
+                state.set_camera_anchor(&output, Point::from((x, -y)), center, zoom);
+            }
             Ok(Response::Camera { x, y })
         }
     }
@@ -287,6 +293,29 @@ fn cmd_zoom(arg: Option<f64>, state: &mut DriftWm) -> Reply {
             Ok(Response::Zoom(clamped))
         }
     }
+}
+
+fn cmd_cursor(state: &mut DriftWm) -> Reply {
+    let pointer = state.seat.get_pointer().ok_or("no pointer")?;
+    let output = state.active_output().ok_or("no output")?;
+    // The pointer is in canvas space on the active output, which follows it —
+    // except while locked, when the stored location is already screen space
+    // (see `SessionLockHandler::lock`).
+    let location = pointer.current_location();
+    let (camera, zoom, origin) = {
+        let os = crate::state::output_state(&output);
+        (os.camera, os.zoom, os.layout_position)
+    };
+    let screen = if state.session_lock.is_locked() {
+        location
+    } else {
+        driftwm::canvas::canvas_to_screen(driftwm::canvas::CanvasPos(location), camera, zoom).0
+    };
+    Ok(Response::Cursor {
+        x: origin.x as f64 + screen.x,
+        y: origin.y as f64 + screen.y,
+        output: output.name(),
+    })
 }
 
 fn cmd_layout(short: bool, state: &mut DriftWm) -> Reply {
@@ -473,7 +502,9 @@ fn cmd_focus(arg: Option<WindowSelector>, state: &mut DriftWm) -> Reply {
                 return Err(e);
             };
             let info = suspended_focused_info(state, id);
-            state.reveal_suspended(id);
+            if let Some(s) = state.find_suspended(id) {
+                state.reveal_element(&StageWindow::Suspended(s), RevealPan::Park(NavZoom::Keep));
+            }
             return Ok(Response::Focused(info));
         }
     };
@@ -493,16 +524,8 @@ fn cmd_focus(arg: Option<WindowSelector>, state: &mut DriftWm) -> Reply {
         ));
     }
     let info = focused_window_info(state, &window);
-    // Already on screen: just raise + focus, don't move the camera. Pinned
-    // windows are always on screen and have no canvas position to navigate to.
-    if state.is_pinned(&window) || state.window_fully_in_viewport(&window) {
-        state.raise_and_focus(&window, SERIAL_COUNTER.next_serial());
-    } else {
-        state.navigate_to_window(
-            &window,
-            NavZoom::from_reset(state.config.zoom_reset_on_activation),
-        );
-    }
+    let zoom = NavZoom::from_reset(state.config.zoom_reset_on_activation);
+    state.reveal_element(&StageWindow::Client(window), RevealPan::Park(zoom));
     Ok(Response::Focused(Some(info)))
 }
 
